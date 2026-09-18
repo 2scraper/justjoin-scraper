@@ -1646,14 +1646,61 @@ def sitemap_locs(xml: Optional[str]) -> List[str]:
     return [_html.unescape(m) for m in _LOC_RE.findall(xml or "")]
 
 
+_URL_ENTRY_RE = re.compile(
+    r"<url>(?P<body>.*?)</url>", re.I | re.S)
+_LASTMOD_RE = re.compile(r"<lastmod>\s*([^<\s]+)\s*</lastmod>", re.I)
+
+
 def sitemap_offer_slugs(xml: Optional[str]) -> List[str]:
-    """Offer slugs out of a sitemap part file, in document order.
+    """Offer slugs out of a sitemap part file, NEWEST FIRST.
 
     robots.txt advertises eight sitemaps of its own, so this is the route
-    the site invites — `active-jobs.xml` held 10,646 offer URLs with
+    the site invites — `active-jobs/part0.xml` held 10,646 offer URLs with
     `lastmod` timestamps on 2026-09-18. It is an index: the outer file
     names `part0.xml`, which is where the URLs are.
+
+    The ORDER is the part that was earned. The file is served oldest-first
+    (its first `lastmod` was 2026-09-14 and its last 2026-09-18), and it is
+    generated ahead of any fetch, so its head is where the offers that have
+    since been taken down collect. Measured 2026-09-18 by asking the
+    endpoint for a sample of each end:
+
+        first 12 entries    10 alive, 2 gone
+        last 12 entries     12 alive, 0 gone
+        12 at random        12 alive, 0 gone
+
+    So walking the file in document order points `--mode offer --pages 3`
+    at the three likeliest-dead addresses in it — and the canary duly came
+    back with zero rows and exit 4 on a site that was serving perfectly.
+    Sorting by `lastmod` descending fixes that and is what a caller wants
+    anyway: `--pages N` should mean the N most recently updated offers, not
+    the N most stale.
+
+    Entries with no `lastmod` sort last rather than being dropped: an
+    undated URL is still an offer, it just cannot be ranked.
     """
+    entries: List[Tuple[str, str]] = []
+    seen = set()
+    for match in _URL_ENTRY_RE.finditer(xml or ""):
+        body = match.group("body")
+        locs = _LOC_RE.findall(body)
+        if not locs:
+            continue
+        slug = slug_from_url(_html.unescape(locs[0]))
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        stamp = _LASTMOD_RE.search(body)
+        entries.append((slug, stamp.group(1) if stamp else ""))
+    # ISO-8601 timestamps sort correctly as strings, and an empty one sorts
+    # below every real one — which is the order wanted, so no date parsing
+    # is needed and a malformed stamp cannot raise.
+    entries.sort(key=lambda pair: pair[1], reverse=True)
+    return [slug for slug, _ in entries]
+
+
+def sitemap_offer_slugs_in_document_order(xml: Optional[str]) -> List[str]:
+    """The same slugs, unsorted. Kept for the check that pins the order."""
     out: List[str] = []
     seen = set()
     for loc in sitemap_locs(xml):

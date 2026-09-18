@@ -296,7 +296,7 @@ jobs:
           retention-days: 14
 
   offer:
-    name: three offers in full, from the site's own sitemap
+    name: five offers in full, from the site's own sitemap
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -311,15 +311,19 @@ jobs:
           pip install -r requirements.txt -r requirements-playwright.txt
           playwright install --with-deps chromium
 
-      # Three offers rather than one, because this mode's pages ARE offers:
-      # with one, the enumeration and the per-page loop are both untested.
-      # The addresses come from justjoin.it's own sitemap, which is also
-      # what proves the sitemap still parses.
-      - name: Run --mode offer (3 offers)
+      # FIVE offers rather than one, and the number is chosen rather than
+      # round. This mode's pages ARE offers, so with one the enumeration
+      # and the per-page loop are both untested — and the addresses come
+      # from a sitemap generated ahead of the fetch, so some of them are
+      # legitimately gone by the time the run reads them. Asking for five
+      # means one delisted offer is an ordinary event rather than a red
+      # canary, while zero rows out of five still means something real
+      # broke.
+      - name: Run --mode offer (5 offers)
         id: offer
         run: |
           set +e
-          python playwright_scraper.py --mode offer --pages 3 \
+          python playwright_scraper.py --mode offer --pages 5 \
               --format both --out canary_offer
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
@@ -346,15 +350,20 @@ jobs:
           print(json.dumps(meta, indent=1))
 
           want("status", meta["status"] == "complete", meta["status"])
-          want("three offers were fetched",
-               meta["pages_completed"] == 3, str(meta["pages_completed"]))
+          want("five offers were fetched",
+               meta["pages_completed"] == 5, str(meta["pages_completed"]))
+          # The enumeration is sorted newest-first precisely so the head of
+          # it is alive. A majority of the five coming back 404 means that
+          # ordering has broken, or the sitemap has gone stale wholesale.
+          want("most of them still exist", len(rows) >= 3,
+               f"only {len(rows)} of 5 enumerated offers still exist — the "
+               f"sitemap ordering may have broken")
           # The sitemap is what supplies the addresses, so a broken sitemap
           # shows up here as an enumeration of zero.
           want("the sitemap still enumerates offers",
                (meta.get("offers_enumerated") or 0) > 1000,
                str(meta.get("offers_enumerated")))
 
-          want("row floor", len(rows) >= 1, f"{len(rows)} rows")
           want("every row is a detail row",
                {r.get("data_source") for r in rows} == {"detail"},
                str({r.get("data_source") for r in rows}))

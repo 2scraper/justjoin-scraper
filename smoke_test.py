@@ -169,15 +169,20 @@ SITEMAP_INDEX_XML = (
     "<sitemap><loc>https://justjoin.it/sitemaps/active-jobs/part0.xml</loc>"
     "</sitemap></sitemapindex>")
 
+# Served OLDEST FIRST, exactly as the site serves it, plus one entry with
+# no `lastmod` at all — so the ordering check has something to reorder and
+# the undated case is exercised rather than assumed.
 SITEMAP_PART_XML = (
     '<?xml version="1.0" encoding="utf-8"?>\n'
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
     "<url><loc>https://justjoin.it/job-offer/fibertide-senior-site-reliability"
     "-engineer-wroclaw-architecture-7f4e4784</loc>"
     "<lastmod>2026-09-14T13:06:30+00:00</lastmod></url>"
+    "<url><loc>https://justjoin.it/job-offer/undated-role-warszawa-java</loc>"
+    "</url>"
     "<url><loc>https://justjoin.it/job-offer/accenture-sap-security-associate"
     "-manager-gdansk-erp-73955f53</loc>"
-    "<lastmod>2026-09-14T13:06:29+00:00</lastmod></url>"
+    "<lastmod>2026-09-18T00:14:09+00:00</lastmod></url>"
     "<url><loc>https://justjoin.it/job-offers/all-locations</loc></url>"
     "</urlset>")
 
@@ -1028,12 +1033,30 @@ def check_the_sitemap_index_is_followed_rather_than_parsed_for_offers():
     equal("an index yields no offer slugs",
           pp.sitemap_offer_slugs(SITEMAP_INDEX_XML), [])
     slugs = pp.sitemap_offer_slugs(SITEMAP_PART_XML)
-    equal("the part file yields only offer slugs", len(slugs), 2)
+    equal("the part file yields only offer slugs", len(slugs), 3)
     check("a listing URL in the sitemap is skipped",
           all("job-offers" not in s for s in slugs), slugs)
-    equal("and they are slugs, not URLs",
-          slugs[0],
-          "fibertide-senior-site-reliability-engineer-wroclaw-architecture-7f4e4784")
+
+    # THE ordering, and it is not cosmetic. The site serves this file
+    # oldest-first and generates it ahead of any fetch, so its head is
+    # where offers that have since been taken down collect: 2 of the first
+    # 12 were gone on 2026-09-18 against 0 of the last 12 and 0 of 12 at
+    # random. Walking it in document order pointed `--mode offer --pages 3`
+    # at the three likeliest-dead addresses in it, and the canary came back
+    # with zero rows on a site that was serving perfectly.
+    equal("the newest offer comes first", slugs[0],
+          "accenture-sap-security-associate-manager-gdansk-erp-73955f53")
+    equal("the oldest is not first", slugs[1],
+          "fibertide-senior-site-reliability-engineer-wroclaw-architecture"
+          "-7f4e4784")
+    equal("an undated entry is kept, and sorts last",
+          slugs[-1], "undated-role-warszawa-java")
+
+    # The document order is still available, and the two must hold the same
+    # SET — a sort that dropped an entry would be worse than no sort.
+    doc = pp.sitemap_offer_slugs_in_document_order(SITEMAP_PART_XML)
+    equal("sorting loses nothing", set(doc), set(slugs))
+    check("and it really did reorder", doc[0] != slugs[0], (doc[0], slugs[0]))
 
 
 def check_enumeration_follows_both_hops():
@@ -1055,7 +1078,9 @@ def check_enumeration_follows_both_hops():
     slugs = page_flow.enumerate_offers(fetch, Args())
     equal("both hops were fetched", len(seen), 2)
     equal("starting at the advertised index", seen[0], pp.SITEMAP_INDEX)
-    equal("and the offers came from the part file", len(slugs), 2)
+    equal("and the offers came from the part file", len(slugs), 3)
+    equal("newest first, as the parser sorts them", slugs[0],
+          "accenture-sap-security-associate-manager-gdansk-erp-73955f53")
 
     # A sitemap that fetches to nothing must not silently report success.
     class Dead:

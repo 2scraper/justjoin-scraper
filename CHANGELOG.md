@@ -9,6 +9,36 @@ promise that every flag is frozen, so a behaviour-changing default can
 appear in one. Where it does, the entry leads with that fact rather than
 burying it.
 
+## [0.1.2] — 2026-09-18
+
+### Fixed
+
+- **`--mode offer` walked the sitemap from its most stale end**, so a small
+  run could come back with nothing at all while the site was serving
+  perfectly. The canary did exactly that.
+
+  justjoin.it serves `active-jobs/part0.xml` OLDEST FIRST — its first
+  `lastmod` was 2026-09-14 and its last 2026-09-18 — and generates it ahead
+  of any fetch, so its head is where offers that have since been taken down
+  collect. Measured by asking the endpoint for a sample of each end:
+
+  | sample | alive | gone |
+  |---|---|---|
+  | first 12 entries | 10 | 2 |
+  | last 12 entries | 12 | 0 |
+  | 12 at random | 12 | 0 |
+
+  The enumeration is now sorted by `lastmod` descending, which is also what
+  `--pages N` should have meant all along: the N most recently updated
+  offers, not the N most stale. Entries with no `lastmod` are kept and sort
+  last rather than being dropped.
+
+- The offer canary asks for five offers rather than three, so one delisted
+  offer is an ordinary event rather than a red check — while zero rows out
+  of five still means something real broke.
+
+[0.1.2]: https://github.com/2scraper/justjoin-scraper/releases/tag/v0.1.2
+
 ## [0.1.1] — 2026-09-18
 
 ### Fixed
