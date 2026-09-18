@@ -9,6 +9,32 @@ promise that every flag is frozen, so a behaviour-changing default can
 appear in one. Where it does, the entry leads with that fact rather than
 burying it.
 
+## [0.1.1] — 2026-09-18
+
+### Fixed
+
+- **A delisted offer was read as a parse error instead of a 404**, so
+  `--mode offer` retried an address that will never exist again, wrote a
+  debug dump for it, and spent a fetch doing so.
+
+  All three engines were discarding what the navigation returned, so the
+  404 reached the classifier as `status=None`. This is ordinary in that
+  mode — justjoin.it's sitemap is generated ahead of the fetch, and the
+  first slug in `active-jobs/part0.xml` had been taken down — and the
+  canary found it on its first run.
+
+  Playwright and pyppeteer now keep `response.status`. Selenium cannot:
+  `driver.get()` returns None and WebDriver exposes no HTTP status at all,
+  so `product_parser.problem_status` reads the status out of the site's own
+  RFC 7231 problem document, which justjoin.it states in the body of every
+  404. That reader is what makes the three engines agree rather than two of
+  them being better informed than the third.
+
+  Verified live against the real delisted offer: all three now report
+  `not_found`, exit 4, no retry and no dump.
+
+[0.1.1]: https://github.com/2scraper/justjoin-scraper/releases/tag/v0.1.1
+
 ## [0.1.0] — 2026-09-18
 
 First release. Reads [justjoin.it](https://justjoin.it), the Polish IT job
@@ -86,15 +112,5 @@ the shape CLAUDE.md §16 describes — copied code with no evidence behind it.
 - **`scraper_api_client.py` could not import.** It called a parser entry
   point that had been renamed, so `--help` itself was an `ImportError`.
   Caught by the suite's signature-binding check.
-
-- **All three engines discarded the navigation's HTTP status**, so a 404
-  reached the classifier as `status=None` and landed on `parse_error`: a
-  retry, a debug dump and a wasted fetch for an address that will never
-  exist again. This is ordinary in `--mode offer` — justjoin.it's sitemap
-  is generated ahead of the fetch, and the FIRST slug in it had been taken
-  down — and the canary found it on its first run. Playwright and pyppeteer
-  now keep `response.status`; Selenium cannot (`driver.get()` exposes none),
-  so the parser also reads the status out of the site's own RFC 7231
-  problem document. Verified on all three against a real delisted offer.
 
 [0.1.0]: https://github.com/2scraper/justjoin-scraper/releases/tag/v0.1.0
