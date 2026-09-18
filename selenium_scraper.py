@@ -1051,11 +1051,12 @@ def scrape(args) -> int:
         with_salary = sum(1 for r in all_rows
                           if getattr(r, "salary_min", None) is not None)
         if all_rows:
-            logger.info("%d of %d row(s) disclose a salary (%.0f%%). The "
-                        "rest are justjoin.it's own \"Undisclosed Salary\" "
-                        "— null here, never zero.",
+            logger.info("%d of %d row(s) disclose a salary (%.0f%%).%s",
                         with_salary, len(all_rows),
-                        100.0 * with_salary / len(all_rows))
+                        100.0 * with_salary / len(all_rows),
+                        "" if with_salary == len(all_rows) else
+                        "  The rest are justjoin.it's own \"Undisclosed "
+                        "Salary\" — null here, never zero.")
 
     if args.mode == "offer" and total_enumerated:
         done = len([o for o in outcomes if o.ok])
