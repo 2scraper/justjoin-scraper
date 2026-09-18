@@ -410,9 +410,22 @@ Known limits, stated rather than left to be discovered:
   because they do not ship a browser.
 
 There is also `scraper_api_client.py`, which renders a page on 2Captcha's
-infrastructure and feeds the result to the same parser. It suits
-`--route ssr` better than the endpoint, where a browser only adds a JSON
-viewer around a document that was already plain text.
+infrastructure and feeds the result to the same parser.
+
+**Point it at the endpoint, not at a listing page** — measured
+2026-09-18, and the opposite of what you would guess for a service that
+exists to render pages:
+
+| `--url` | result |
+|---|---|
+| `/api/candidate-api/offers?…` (47 KB) | HTTP 200 in 12s, 20 rows, $0.0005 |
+| `/job-offers/all-locations` (1.8 MB) | HTTP 408 at the default 60s timeout |
+| the same page at `--timeout 120` | API 200, upstream **HTTP 500, 0 bytes** |
+
+justjoin.it's rendered listing is too heavy to render reliably through the
+API; its endpoint is a few tens of KB and comes back every time. A run that
+gets nothing now says so — the client reports the upstream failure and
+exits 5 rather than calling it an empty board.
 
 ### Concurrency
 

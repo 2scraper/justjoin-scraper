@@ -22,12 +22,19 @@ browser, not because the site demands it. What it genuinely buys here is
 the same thing `--cdp-url` buys: a specific exit country, and no local
 Chromium to install.
 
-One caveat particular to this site: the Scraper API returns RENDERED
-output, so it suits `--route ssr` (a listing page whose payload is
-serialised inside it) better than the endpoint, where a browser adds a JSON
-viewer around a document that was already plain text. The endpoint is
-readable either way — `product_parser.parse_json` finds the braces — but
-the rendering buys nothing there.
+One caveat particular to this site, and it is the opposite of what you
+would guess for a service that exists to render pages: **point this at the
+ENDPOINT, not at a listing page.** Measured 2026-09-18:
+
+    /api/candidate-api/offers?...   47 KB   200 in 12s, 20 rows, $0.0005
+    /job-offers/all-locations      1.8 MB   408 at the default 60s timeout
+    ...the same page, --timeout 120         API 200, upstream 500, 0 bytes
+
+justjoin.it's rendered listing is too heavy to render reliably through the
+API; its endpoint is a few tens of KB and comes back every time. A browser
+does wrap that JSON in its own viewer markup, and
+`product_parser.parse_json` finds the braces inside it — so the rendering
+buys nothing on that route, but it costs nothing either.
 
     python3 scraper_api_client.py \
         --url "https://justjoin.it/job-offers/all-locations"
@@ -53,6 +60,7 @@ from product_parser import (BOT_CHALLENGE_MARKERS, MODES, DEFAULT_MODE,
                             ROUTES, DEFAULT_ROUTE)
 from output_writer import save
 import env_config
+import page_flow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scraper_api_client")
@@ -72,7 +80,7 @@ MAX_API_TIMEOUT = 120
 # Imported rather than redefined: the browser engines return the same code for
 # a Scraping Browser that will not accept a connection, and two definitions
 # of one exit code is how a family's contract drifts.
-from output_writer import EXIT_API_ERROR  # noqa: E402
+from output_writer import EXIT_API_ERROR, EXIT_NO_PRODUCTS  # noqa: E402
 
 def _mask_credentials(url: str) -> str:
     """Never print a username:password embedded in a ws://... or http://... URL."""
@@ -239,6 +247,36 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
                      "segment, and playwright_scraper.py with a residential "
                      "--proxy is the other move.")
         return 3
+
+    # And the states that are not blocked but hold nothing to read. The
+    # engines ask `page_flow.should_parse(state)` here; this client did not,
+    # and would report "Parsed 0 job(s)" and exit 4 — "the query matched
+    # nothing" — for a body the site never served. Measured 2026-09-18: the
+    # Scraper API rendering justjoin.it's 1.8 MB listing page came back with
+    # upstream HTTP 500 and ZERO bytes, and this path called it an empty
+    # result. CLAUDE.md §8: blocked, empty and failed are three different
+    # answers, and a consumer that cannot tell them apart reads an upstream
+    # failure as a board with no jobs on it.
+    if not page_flow.should_parse(state):
+        dump = f"{args.out}_scraperapi_debug.html"
+        with open(dump, "w", encoding="utf-8") as f:
+            f.write(html)
+        if state == "not_found":
+            logger.error("justjoin.it has no offer at %s (upstream HTTP %s). "
+                         "An offer taken down between an enumeration and a "
+                         "fetch is ordinary; this is not a block.",
+                         args.url, upstream_status)
+            return EXIT_NO_PRODUCTS
+        logger.error(
+            "The Scraper API delivered, but what it rendered is %r — upstream "
+            "HTTP %s, %d bytes, saved to %s. That is NOT an empty result: "
+            "nothing here says the board has no jobs on it. This site's own "
+            "endpoint (/api/candidate-api/offers) is a few tens of KB and "
+            "renders reliably; its listing PAGE is 1.8 MB and timed out at "
+            "the default 60s. Point --url at the endpoint, raise --timeout, "
+            "or use playwright_scraper.py, which fetches it directly.",
+            state, upstream_status, len(html), dump)
+        return EXIT_API_ERROR
 
     # One dispatch, shared with the browser engines, so this client cannot
     # quietly disagree with them about which reader a mode uses.

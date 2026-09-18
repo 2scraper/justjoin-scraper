@@ -9,6 +9,72 @@ promise that every flag is frozen, so a behaviour-changing default can
 appear in one. Where it does, the entry leads with that fact rather than
 burying it.
 
+## [0.1.3] — 2026-09-18
+
+An audit against the family's own checklist, run after publishing rather
+than before it. Everything here was found by a check or a live run, not by
+reading.
+
+### Fixed
+
+- **`scraper_api_client.py` reported an upstream failure as an empty
+  board.** It did not consult `page_flow.should_parse()` the way the three
+  browser engines do, so a body the site never served came back as
+  "Parsed 0 job(s)" and exit 4 — "the query matched nothing". Measured: the
+  Scraper API rendering justjoin.it's 1.8 MB listing page returned upstream
+  HTTP 500 with **zero bytes**, and that path called it an empty result. It
+  now names the state, saves the body and exits 5. CLAUDE.md §8: blocked,
+  empty and failed are three different answers.
+
+- **A latent `NameError` in the same client** — `EXIT_NO_PRODUCTS` was used
+  on the new `not_found` branch and never imported. Caught by the suite's
+  undefined-name walk, and the control was verified: planting the fault
+  makes the check name that exact symbol.
+
+- **`--url` was checked against `HOST` while `HOSTS` sat unread.** The
+  tuple is now the single source of truth rather than decoration.
+
+### Corrected
+
+- **The README had the Scraper API backwards.** It said the service suits
+  the rendered listing page better than the endpoint, which was reasoned
+  rather than measured. Measured 2026-09-18:
+
+  | `--url` | result |
+  |---|---|
+  | `/api/candidate-api/offers?…` (47 KB) | HTTP 200 in 12s, 20 rows, $0.0005 |
+  | `/job-offers/all-locations` (1.8 MB) | HTTP 408 at the default 60s |
+  | the same page at `--timeout 120` | API 200, upstream HTTP 500, 0 bytes |
+
+  The opposite of what was written: point it at the endpoint.
+
+- **An inherited figure replaced with a measured one.** A comment repeated
+  CLAUDE.md's "17 of 18 repos" for the fingerprint flags. Re-counted across
+  the 26 sibling repos: 25 of 26, with the command beside it (§13).
+
+### Removed
+
+- `SITE_TOTAL_HINT` and `EXPIRED_SITEMAP_INDEX`: two constants nothing
+  read. A sweep for public names with no consumer now finds exactly two,
+  both in the shared captcha client and both dead in every sibling repo
+  checked — those are pinned by a check rather than removed, so the list
+  cannot grow silently (§17).
+
+### Verified live, against a real 2Captcha key
+
+- **`--fingerprint` applies what it fetches.** CLAUDE.md §16 lists four
+  defects that shipped on this path in four repos at once; none is present
+  here. A PL fingerprint reached the browser intact: user agent
+  `Windows NT 10.0 … Chrome/151`, locale `pl-PL` (not `en-PL`), timezone
+  `Europe/Warsaw`, and `--fp-tags Windows` is accepted by the API.
+- **Credentials never reach a log**, including an exception message. A dead
+  proxy with `secretuser:secretpass123` in the URL logged
+  `http://***:***@127.0.0.1:9` — host and port kept, both credentials
+  masked, zero occurrences of either in the whole run — and was named a
+  PROXY failure rather than a timeout. Identical on all three engines.
+
+[0.1.3]: https://github.com/2scraper/justjoin-scraper/releases/tag/v0.1.3
+
 ## [0.1.2] — 2026-09-18
 
 ### Fixed

@@ -287,9 +287,6 @@ DEFAULT_ITEMS_COUNT = 100
 # the cap instead (CLAUDE.md §21).
 MAX_FROM = 10_000
 
-# What the site says it holds, against what any one query can reach.
-SITE_TOTAL_HINT = COUNT_PATH
-
 # ---------------------------------------------------------------------------
 # User agent
 # ---------------------------------------------------------------------------
@@ -505,7 +502,10 @@ def is_supported_url(url: str) -> Tuple[bool, str]:
             "its own bundle sends. The route that works is %s on %s, which "
             "is what this scraper uses. Pass a %s URL instead."
             % (UPSTREAM_API_HOST, API_PATH, HOST, HOST))
-    if host != HOST:
+    # Checked against HOSTS rather than against HOST, so the tuple above is
+    # the single source of truth rather than decoration. `_bare_host` has
+    # already dropped a `www.` prefix, which is why both spellings pass.
+    if host not in (_bare_host(h) for h in HOSTS):
         return False, (
             "%r is not a justjoin.it URL. This scraper reads %s (and its "
             "www. alias) only." % (url, HOST))
@@ -1635,8 +1635,12 @@ def itemlist_urls(html: Optional[str]) -> List[str]:
 # Sitemaps
 # ---------------------------------------------------------------------------
 
+# The one this scraper walks. justjoin.it advertises eight sitemaps in its
+# robots.txt, including an `expired-jobs.xml`; that one is deliberately NOT
+# carried here, because a constant nothing reads is the same defect as dead
+# code (CLAUDE.md §17). Anyone who wants the expired board can point
+# `--slugs-file` at it.
 SITEMAP_INDEX = BASE + "/sitemaps/active-jobs.xml"
-EXPIRED_SITEMAP_INDEX = BASE + "/sitemaps/expired-jobs.xml"
 
 _LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
 

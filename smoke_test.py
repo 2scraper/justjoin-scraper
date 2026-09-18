@@ -274,18 +274,37 @@ def check_the_salary_is_never_read_from_index_zero():
 
 
 def check_no_conversion_currency_ever_reaches_a_row():
-    """Not one row may carry a currency the site marked as computed."""
+    """Not one row may carry a currency the site marked as computed.
+
+    Asked through `product_parser.converted_currencies`, which exists for
+    exactly this and whose docstring says so — a helper that promises the
+    suite reads it and is then read by nothing is the defect CLAUDE.md §17
+    names.
+    """
     records = {r["guid"]: r for r in json.loads(LISTING_JSON)["data"]}
+    offenders = []
+    saw_conversions = 0
     for row in _listing().rows:
         entries = records[row.sku]["employmentTypes"]
-        computed = {(e.get("currency") or "").upper() for e in entries
-                    if e.get("currencySource") == "conversion"}
-        quoted = {(e.get("currency") or "").upper() for e in entries
-                  if e.get("currencySource") == "original"}
+        computed = set(pp.converted_currencies(entries))
+        quoted = {o.currency for o in
+                  pp.salary_from_employment_types(entries)[1] if o.currency}
+        if computed:
+            saw_conversions += 1
         if row.salary_currency and row.salary_currency in computed - quoted:
-            check("row %s carries a computed currency" % row.sku[:8], False,
-                  "%s is a conversion on this record" % row.salary_currency)
-    check("no row carries a conversion-only currency", True)
+            offenders.append((row.sku[:8], row.salary_currency))
+    check("no row carries a conversion-only currency", not offenders,
+          str(offenders))
+    # Without this the check could pass on a fixture that holds no
+    # conversions at all — green for the wrong reason (CLAUDE.md §22).
+    check("the fixture actually contains conversions to avoid",
+          saw_conversions >= 5,
+          "only %d of 7 records carry a computed currency" % saw_conversions)
+    check("and the helper really finds them",
+          set(pp.converted_currencies(
+              records[_listing().rows[0].sku]["employmentTypes"]))
+          <= {"USD", "EUR", "GBP", "CHF", "PLN"},
+          "an unexpected conversion currency")
 
 
 def check_the_monthly_figure_is_not_read_as_the_quoted_rate():
@@ -403,6 +422,13 @@ def check_a_form_apply_has_no_url_and_that_is_the_site_saying_so():
     methods = {r.apply_method for r in _listing().rows}
     check("the fixture holds both apply methods",
           methods == {"form", "external"}, sorted(methods))
+    # Asked against the parser's own vocabulary, so a value the site starts
+    # sending that this repo has never seen fails here rather than reaching
+    # a consumer unannounced.
+    equal("and both are in the measured vocabulary",
+          methods <= set(pp.APPLY_METHODS), True)
+    equal("which is the two the site publishes",
+          sorted(pp.APPLY_METHODS), ["external", "form"])
 
 
 def check_multi_city_offers_keep_every_city():
@@ -1279,8 +1305,15 @@ CONTRACT_FLAGS = {
     "--twocaptcha-key", "--captcha-api", "--solve-captcha", "--min-score",
     "--cdp-endpoint", "--allow-empty", "--dump-html",
     # The five CLAUDE.md §9 admits its own list omitted for months while
-    # nearly every repo shipped them — counted 2026-09-16 in 17 of 18
-    # repos — plus the headless pair every engine carries.
+    # nearly every repo shipped them, plus the headless pair every engine
+    # carries. RE-MEASURED here rather than inherited (§13 — a number you
+    # inherited is not a number you measured): counted 2026-09-18 across
+    # the 26 sibling repos in ~/2scraper, `--fingerprint`, `--fp-tags` and
+    # `--fp-country` are in 25 of 26 and `--locale` in 23, against 23 flags
+    # that are in all 26. Re-derive with:
+    #
+    #   grep -ohE '"--[a-z0-9-]+"' */playwright_scraper.py \
+    #     | sort | uniq -c | sort -rn
     "--fingerprint", "--fp-tags", "--fp-country",
     "--headless", "--headful",
 }
@@ -1371,6 +1404,58 @@ def check_state_policy():
           page_flow.should_retry("something-new")
           and not page_flow.should_solve("something-new"))
     equal("at most one solve per page", page_flow.SOLVES_PER_PAGE, 1)
+
+
+def check_the_two_known_dead_names_in_the_shared_solver_stay_pinned():
+    """§17 says a public name nothing reads is the same defect as dead code,
+    and a sweep of this repo finds exactly two — both in `captcha_solver.py`,
+    which is family core copied verbatim.
+
+    They are LEFT, and this check is the pin rather than the fix. Checked
+    2026-09-18 against three sibling repos (mercor, bbb, foodpanda): both
+    are dead in every one of them, so removing them here would make this
+    repo's copy of a shared module differ from five others for no reason
+    this site supplies — which is how a family's core stops being shared.
+
+    What the check buys is that the list cannot GROW silently. A third dead
+    name appearing in the shared solver is a real finding; these two are a
+    decision (CLAUDE.md §10: pin a known limitation rather than
+    half-guarding it).
+    """
+    import ast as _ast
+    src = open(os.path.join(HERE, "captcha_solver.py"), encoding="utf-8").read()
+    # The suite itself is excluded, and not as a convenience: this check
+    # NAMES both functions in its own body, so including it would find them
+    # and report a clean bill. The question is whether the PRODUCTION code
+    # reads them.
+    everything = "\n".join(
+        open(os.path.join(HERE, f), encoding="utf-8").read()
+        for f in sorted(os.listdir(HERE))
+        if f.endswith(".py") and f != "smoke_test.py")
+    dead = []
+    for node in _ast.parse(src).body:
+        if isinstance(node, (_ast.FunctionDef, _ast.ClassDef)):
+            names = [node.name]
+        elif isinstance(node, _ast.Assign):
+            # Assignments too, and that is not pedantry: one of the two is
+            # a backwards-compatibility ALIAS (`solve_recaptcha_v3 =
+            # solve_recaptcha`), which a scan that only walked `def` would
+            # miss — and did, until this line was added.
+            names = [t.id for t in node.targets
+                     if isinstance(t, _ast.Name)]
+        else:
+            names = []
+        for name in names:
+            if name.startswith("_"):
+                continue
+            if len(re.findall(r"\b" + re.escape(name) + r"\b", everything)) <= 1:
+                dead.append(name)
+    equal("the shared solver's dead names are the two known ones",
+          sorted(dead), ["get_balance", "solve_recaptcha_v3"])
+    check("one of them is a function and one an alias, as recorded",
+          "def get_balance" in src
+          and "solve_recaptcha_v3 = solve_recaptcha" in src,
+          "the shapes changed, so the pin above needs re-reading")
 
 
 def check_policy_constants_have_a_consumer():
