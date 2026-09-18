@@ -535,6 +535,14 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d/%d: %s", page_num, args.pages, url)
         load_failed, exit_failed = False, None
+        # Selenium exposes NO HTTP status: `driver.get()` returns None and
+        # WebDriver has no response object. So this engine passes None and
+        # relies on the parser reading the status out of the site's own
+        # problem document instead — which is why that reader exists at all
+        # (see `product_parser.problem_status`). Its twins pass the real
+        # status, which is strictly better information; both reach the same
+        # verdict on this site because justjoin.it states its own.
+        http_status = None
         for attempt in range(1, args.retries + 1):
             try:
                 session.driver.get(url)
@@ -577,7 +585,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                         "already made for it and SOLVES_PER_PAGE is %d.",
                         page_num, solves_bought, page_flow.SOLVES_PER_PAGE)
         html = _snapshot(session, url) or ""
-        state = page_flow.classify(html, None, d["current_url"](), args.mode, args.route)
+        state = page_flow.classify(html, http_status, d["current_url"](),
+                                   args.mode, args.route)
 
         # every route here is complete in the first response, so a body is parseable in the
         # FIRST response and there is nothing to wait for on a healthy page.
@@ -599,7 +608,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 logger.info("Still nothing after %.0fs (%d match(es) for %s).",
                             wait_ms / 1000.0, found, sel)
             html = _snapshot(session, url) or html
-            state = page_flow.classify(html, None, d["current_url"](), args.mode, args.route)
+            state = page_flow.classify(html, http_status, d["current_url"](),
+                                   args.mode, args.route)
 
         # The paid path is reached only for state "challenge" — Cloudflare's
         # Managed Challenge, which IS a test. It is NOT reached for
@@ -612,7 +622,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             if handle_captcha_if_present(session, args):
                 time.sleep(1)
                 html = d["content"]() or html
-                state = page_flow.classify(html, None, d["current_url"](), args.mode, args.route)
+                state = page_flow.classify(html, http_status, d["current_url"](),
+                                   args.mode, args.route)
                 if state == "content":
                     logger.info("The solve was accepted — page %d is content "
                                 "now.", page_num)

@@ -87,4 +87,14 @@ the shape CLAUDE.md §16 describes — copied code with no evidence behind it.
   point that had been renamed, so `--help` itself was an `ImportError`.
   Caught by the suite's signature-binding check.
 
+- **All three engines discarded the navigation's HTTP status**, so a 404
+  reached the classifier as `status=None` and landed on `parse_error`: a
+  retry, a debug dump and a wasted fetch for an address that will never
+  exist again. This is ordinary in `--mode offer` — justjoin.it's sitemap
+  is generated ahead of the fetch, and the FIRST slug in it had been taken
+  down — and the canary found it on its first run. Playwright and pyppeteer
+  now keep `response.status`; Selenium cannot (`driver.get()` exposes none),
+  so the parser also reads the status out of the site's own RFC 7231
+  problem document. Verified on all three against a real delisted offer.
+
 [0.1.0]: https://github.com/2scraper/justjoin-scraper/releases/tag/v0.1.0

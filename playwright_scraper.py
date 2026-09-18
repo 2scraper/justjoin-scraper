@@ -951,9 +951,17 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # Retry a navigation timeout rather than ending the run on it. One
         # network flap on page 12 of 50 should not break the loop.
         load_failed, exit_failed = False, None
+        # The navigation's HTTP status, kept rather than discarded. A 404 on
+        # a delisted offer is an ordinary event in `--mode offer`, and
+        # without the status it reads as a body this parser could not
+        # understand — a retry and a debug dump for an address that will
+        # never exist again. The canary found exactly that on its first run.
+        http_status = None
         for attempt in range(1, args.retries + 1):
             try:
-                session.page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                response = session.page.goto(url, wait_until="domcontentloaded",
+                                             timeout=60000)
+                http_status = response.status if response is not None else None
                 load_failed = False
                 break
             except (PWTimeout, PWError) as e:
@@ -1000,8 +1008,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                         page_flow.SOLVES_PER_PAGE)
 
         body = _fetch_body(session, args, url)
-        state = _classify(session.page, body, mode=args.mode,
-                          route=args.route)
+        state = _classify(session.page, body, http_status, args.mode,
+                          args.route)
 
         # Every route this engine reads is complete in the FIRST response,
         # so there is nothing to wait for on a healthy page. The endpoint
@@ -1038,8 +1046,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 logger.info("Still nothing after %.0fs (%d match(es) for %s).",
                             wait_timeout / 1000, found, _ready_selector(args))
             body = _fetch_body(session, args, url) or body
-            state = _classify(session.page, body, mode=args.mode,
-                          route=args.route)
+            state = _classify(session.page, body, http_status, args.mode,
+                          args.route)
 
         # The paid path is reached only for state "challenge" — Cloudflare's
         # managed challenge, which IS a test and can be solved once
@@ -1053,8 +1061,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             if handle_captcha_if_present(session.page, args):
                 session.page.wait_for_timeout(1000)
                 body = _fetch_body(session, args, url) or body
-                state = _classify(session.page, body, mode=args.mode,
-                          route=args.route)
+                state = _classify(session.page, body, http_status, args.mode,
+                          args.route)
                 # The VERIFIED outcome, and the only one worth reporting: a
                 # "ready" task result is not evidence the token works. This
                 # line is what says whether the money bought anything.

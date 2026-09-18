@@ -471,6 +471,59 @@ def check_an_empty_slug_response_is_not_read_as_an_offer():
           pp.detect_page_state(LISTING_JSON, 200, "", "offer"), "parse_error")
 
 
+def check_a_delisted_offer_is_read_from_the_body_when_there_is_no_status():
+    """The canary found this on its first run.
+
+    justjoin.it's sitemap is generated ahead of the fetch, so an offer can
+    be taken down in between — the FIRST slug in the sitemap was, on
+    2026-09-18. The engines were discarding the navigation's HTTP status,
+    so the 404 arrived at the classifier as `status=None`, fell past the
+    404 branch and landed on `parse_error`: a retry, a debug dump and a
+    wasted fetch for an address that will never exist again.
+
+    Two fixes, and the second is the one that covers every engine.
+    Playwright and pyppeteer now keep `response.status`. Selenium CANNOT —
+    `driver.get()` returns None and WebDriver exposes no status at all — so
+    the parser reads the status out of the site's own RFC 7231 problem
+    document, which justjoin.it states in the body.
+    """
+    equal("with a transport status, it is not_found",
+          pp.detect_page_state(NOT_FOUND_JSON, 404,
+                               pp.detail_api_url("gone"), "offer"),
+          "not_found")
+    equal("and WITHOUT one it is still not_found",
+          pp.detect_page_state(NOT_FOUND_JSON, None,
+                               pp.detail_api_url("gone"), "offer"),
+          "not_found")
+    equal("the body states its own status",
+          pp.problem_status(json.loads(NOT_FOUND_JSON)), 404)
+    equal("a real offer states none",
+          pp.problem_status(json.loads(DETAIL_JSON)), None)
+    equal("nor does a listing", pp.problem_status(json.loads(LISTING_JSON)),
+          None)
+    # The reader must not fire on any JSON that happens to carry a
+    # `status` key — it needs the problem document's own shape.
+    equal("a payload with a bare status key is not a problem document",
+          pp.problem_status({"status": 404}), None)
+    equal("nor is one with a type and no status",
+          pp.problem_status({"type": "x"}), None)
+
+    # And every engine must actually thread a status through, or the
+    # Playwright fix would be silently absent from its twins.
+    for module in ENGINES:
+        path = os.path.join(HERE, module + ".py")
+        if not os.path.exists(path):
+            continue
+        source = open(path, encoding="utf-8").read()
+        check("%s binds the navigation status" % module,
+              "http_status" in source,
+              "the status is being discarded again")
+        check("%s passes it to classify" % module,
+              re.search(r"classify\([^)]*http_status", source, re.S)
+              or re.search(r"_classify\([^)]*http_status", source, re.S),
+              "a status is captured and then not used")
+
+
 def check_the_404_is_not_a_block():
     """An offer taken down between the sitemap and the fetch is ordinary."""
     equal("state", pp.detect_page_state(NOT_FOUND_JSON, 404,

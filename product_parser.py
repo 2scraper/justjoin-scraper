@@ -2217,6 +2217,37 @@ PAGE_STATES = ("content", "empty", "blocked", "not_found", "cap_exceeded",
 _MIN_BODY_BYTES = 200
 
 
+
+# justjoin.it answers a missing offer with an RFC 7231 problem document
+# that states its own status in the BODY:
+#
+#     {"type": "https://tools.ietf.org/html/rfc7231#section-6.6.1",
+#      "title": "Entity not found", "status": 404,
+#      "detail": "Offer with active slug '...' not found for job board
+#                 'justjoinit'.", ...}
+#
+# Read from the body rather than only from the transport status, and that
+# is not belt-and-braces — it is the only signal one of the three engines
+# has. Selenium's `driver.get()` returns nothing and exposes no HTTP
+# status at all, so an engine that relied on the status alone would
+# classify a delisted offer as `parse_error` there: a RETRY, a debug dump
+# and a wasted fetch, for an address that will never exist again.
+#
+# Found by the canary on its first run, which is CLAUDE.md §15 exactly —
+# the first slug in the sitemap had been taken down between the sitemap
+# being generated and the run reading it, and every engine called it a
+# parse_error because the navigation status was being discarded.
+def problem_status(payload: Any) -> Optional[int]:
+    """The status an RFC 7231 problem document states about itself."""
+    if not isinstance(payload, dict):
+        return None
+    if not (payload.get("type") or payload.get("title")):
+        return None
+    if "status" not in payload:
+        return None
+    return _int_or_none(payload.get("status"))
+
+
 def detect_page_state(body: Optional[str], status: Optional[int] = None,
                       url: str = "", mode: str = DEFAULT_MODE,
                       route: str = DEFAULT_ROUTE) -> str:
@@ -2277,9 +2308,16 @@ def detect_page_state(body: Optional[str], status: Optional[int] = None,
         if isinstance(payload, dict) and isinstance(payload.get("data"), list):
             return "content" if payload["data"] else "empty"
 
-    # (3) A 404 is the site saying the address is not a thing.
+    # (3) A 404 is the site saying the address is not a thing — read from
+    # the transport status where the driver exposes one, and from the
+    # site's own problem document where it does not. See `problem_status`.
     if status == 404:
         return "not_found"
+    stated = problem_status(parse_json(stripped))
+    if stated == 404:
+        return "not_found"
+    if stated is not None and stated >= 500:
+        return ("cap_exceeded" if _asks_past_cap(url) else "unknown")
 
     # (4) Walking off the end of a capped result set. `from=10000` and
     # `from=10100` are both HTTP 500 — the site manufactures an error that
