@@ -10,26 +10,20 @@ body:
         mask credentials in their own logs, but raw HTML dumps and the Scraper
         API's `x-debug` header do not. Replace them with `***`.
 
-        Two things answer most reports faster than we can:
+        A few things answer most reports faster than we can:
 
-        - **Everything exit 3?** Check the exit address first. Etsy's
-          DataDome answers every datacentre and VPN IP with HTTP 403, so a run
-          from a VPS or a CI runner is blocked whatever else is set. If the
-          log says `t=bv`, a captcha key does not help — that challenge is
-          not solvable. The Scraping Browser API (`--cdp-endpoint`) is the
-          path that works; if a profile keeps refusing after three retries,
-          try a different `pid`.
-        - **Zero products?** You may be on a page that has none — a taxonomy
-          hub, or one page past the end of a listing. It answers 200 with
-          nothing on it, which is exit 4 and a correct answer. See
-          [TROUBLESHOOTING.md](../blob/main/TROUBLESHOOTING.md).
-        - **`rating` empty on every row?** That is expected on a listing run:
-          Etsy publishes no per-listing rating there. The stars you see on a
-          tile are the shop's and are in `shop_rating`. See the README.
-        - **Wrong currency or language?** Etsy decides both from your exit
-          IP, not from the URL — a request for `/fr/…` from a German exit is
-          redirected to `/de/…`. The row's `url` says which storefront
-          actually answered.
+        - **Everything exit 3?** That is new on this site: every route this
+          scraper reads was served to a bare datacentre address with no
+          credentials. Attach the saved debug HTML — it is the finding. One
+          known refusal: a `Python-urllib/*` User-Agent gets HTTP 403.
+        - **Zero rows?** A filter combination may genuinely match nothing.
+          That is exit 4 and a correct answer. Check the query on the site.
+        - **Salary empty on many rows?** About half of justjoin.it's offers
+          disclose no salary; those are null by design. `--with-salary`
+          filters them out at the site. See the README.
+        - **Fewer rows than the site's total?** Every query is capped at
+          10,000 results. The sidecar records the cap; `--mode facets` shows
+          how to partition a run.
 
   - type: dropdown
     id: engine
@@ -77,8 +71,7 @@ body:
       render: shell
       placeholder: |
         python3 playwright_scraper.py \
-          --url "https://www.etsy.com/search?q=handmade+mug" \
-          --pages 3 --out grills
+          --category python --pages 3 --out python_jobs
     validations:
       required: true
 
@@ -98,7 +91,7 @@ body:
     attributes:
       label: What you expected instead
       placeholder: >-
-        96 products, as the README says a category page yields.
+        300 offers, three pages of 100.
     validations:
       required: true
 

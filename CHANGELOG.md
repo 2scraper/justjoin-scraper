@@ -9,6 +9,34 @@ promise that every flag is frozen, so a behaviour-changing default can
 appear in one. Where it does, the entry leads with that fact rather than
 burying it.
 
+## [Unreleased]
+
+### Fixed
+
+Leftovers from the repos this one was bootstrapped from, each describing
+another site as if it were this one:
+
+- `CONTRIBUTING.md` described Mercor's sources, markers, captcha, live-run
+  notes and scope (and Wellfound's pagination and pay strings). Rewritten
+  for justjoin.it from this repo's own README measurements.
+- `SECURITY.md` asked for "mercor-scraper security" in the subject line and
+  named Mercor in the out-of-scope list; it also said the project has no
+  releases, and pointed at a README section that does not exist.
+- The issue templates were Etsy's: DataDome advice, `etsy.com` example
+  URLs, a JSON-LD evidence recipe for a site whose parser reads JSON, and
+  links to a `TROUBLESHOOTING.md` this repo does not have.
+- `requirements.txt` was headed `# mercor-scraper`.
+- `.gitignore` and `.dockerignore` ignored `wellfound_jobs.*` instead of
+  this repo's own default output prefix `justjoin_jobs`.
+- `smoke_test.py`: the sidecar check used Mercor run metadata
+  (`mercor.com`, `/explore`, 390 records); it now uses a real
+  `--route ssr` sidecar from this repo. The suite's `--help` description
+  said "mercor-scraper offline suite", and three comments described
+  Mercor's routes as this site's.
+
+- `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
+  that does not exist in this repo (it came with the copied core). Removed.
+
 ## [0.1.3] — 2026-09-18
 
 An audit against the family's own checklist, run after publishing rather
