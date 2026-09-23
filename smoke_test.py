@@ -2833,6 +2833,62 @@ def check_x_debug_header_is_redacted():
                  'logger.info("x-debug: %s", _redact_debug_header(debug))' in src)
 
 
+def check_scraper_api_waitfor_object_and_http_code():
+    """Measured 2026-09-23 against the live Scraper API: `waitFor` sent as
+    a JSON-encoded string is refused with HTTP 422 and still billed, and
+    the response's `status` is the API's verdict ("success") while the
+    target's own code is `http_code`. Drives the real fetch_html with
+    requests.post replaced, so no network and no money."""
+    import argparse
+    import logging
+    import scraper_api_client as sac
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        headers = {}
+        text = ""
+
+        def json(self):
+            return {"status": "success", "http_code": 403, "body": "<html></html>"}
+
+    def _fake_post(url, **kw):
+        captured["json"] = kw.get("json")
+        return _Resp()
+
+    logged = []
+
+    class _H(logging.Handler):
+        def emit(self, record):
+            if str(record.msg).startswith("Upstream page status"):
+                logged.append(record.args[0])
+
+    h = _H()
+    real_post = sac.requests.post
+    sac.requests.post = _fake_post
+    sac.logger.addHandler(h)
+    result = None
+    try:
+        args = argparse.Namespace(url='https://justjoin.it/job-offers/all-locations', key="k", timeout=60, cdp_url=None,
+                                  wait_text='offers', wait_element=None,
+                                  wait_state=None)
+        result = sac.fetch_html(args)
+    finally:
+        sac.requests.post = real_post
+        sac.logger.removeHandler(h)
+    # Where fetch_html returns (html, status) the status handed onward is
+    # the second element; where it returns only the html, the log line is
+    # the only place the status goes.
+    handed = result[1] if isinstance(result, tuple) else (logged[0] if logged else None)
+    wf = (captured.get("json") or {}).get("waitFor")
+    check("Scraper API: --wait-text sends waitFor as an OBJECT, not a JSON string "
+                "(a string is HTTP 422 and still billed, measured 2026-09-23)",
+                isinstance(wf, dict) and wf.get("text") == 'offers')
+    check("Scraper API: the target status handed onward is http_code (403, an int), "
+                "not the API's own 'success' verdict",
+                type(handed) is int and handed == 403 and logged == [403])
+
+
 
 CHECKS = [v for k, v in sorted(globals().items()) if k.startswith("check_")]
 
