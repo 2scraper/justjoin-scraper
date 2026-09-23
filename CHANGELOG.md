@@ -34,6 +34,9 @@ another site as if it were this one:
   said "mercor-scraper offline suite", and three comments described
   Mercor's routes as this site's.
 
+- `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
+  that does not exist in this repo (it came with the copied core). Removed.
+
 ## [0.1.3] — 2026-09-18
 
 An audit against the family's own checklist, run after publishing rather
