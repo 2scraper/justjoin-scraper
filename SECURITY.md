@@ -11,7 +11,7 @@ public from the moment you press submit.
 
 If private reporting is unavailable to you, mail support@2captcha.com. That is
 2Captcha's general support address rather than a security-only one, so put
-**"mercor-scraper security"** in the subject — otherwise it lands in a queue
+**"justjoin-scraper security"** in the subject — otherwise it lands in a queue
 about API keys and billing and takes longer to reach the right person.
 
 **What helps most:** the version you are on (commit hash), the exact command,
@@ -53,10 +53,11 @@ In scope:
 
 Not because these do not matter, but because they belong somewhere else:
 
-- **Bypassing Mercor's bot protection.** This scraper drives an ordinary
-  browser and passes challenges the way a browser does. Anything about how
-  Cloudflare behaves is not a vulnerability in this repository.
-- **The scraper stopped working.** Mercor changing its markup is expected —
+- **Bypassing justjoin.it's bot protection.** This scraper drives an
+  ordinary browser and passes challenges the way a browser does. Anything
+  about how the site's edge behaves is not a vulnerability in this
+  repository.
+- **The scraper stopped working.** justjoin.it changing its endpoint is expected —
   file it as a normal issue, there is a template for exactly that.
 - **Anything about 2Captcha's services** — the solver API, the Scraping Browser
   API, proxies, fingerprints, billing, quotas. This repository is only a client
@@ -71,17 +72,16 @@ Not because these do not matter, but because they belong somewhere else:
   Several of our optional dependencies carry advisories for code paths this
   project never calls; a report needs to show the path.
 - **Rate limits, terms of service, or the legality of scraping** in your
-  jurisdiction. See the Legal section of the README — those are your
-  responsibility as the operator, not defects.
+  jurisdiction. Those are your responsibility as the operator, not
+  defects.
 - **Reports generated entirely by an automated tool** with no analysis of
   whether the finding applies. We read every report, and unexamined scanner
   output takes time away from ones that matter.
 
 ## Supported versions
 
-`main` only. This project has no releases or version tags; fixes land on `main`
-and you update by pulling. If you are running an old clone, update before
-reporting.
+The latest release and `main`. Fixes land on `main` first and ship in the
+next release. If you are running an old clone, update before reporting.
 
 ## If you have leaked a key
 

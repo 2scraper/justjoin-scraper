@@ -40,42 +40,28 @@ not the check caught it.
 
 ## Reporting a site change
 
-Mercor changing its markup is the normal way this stops working, and it has
-its own issue template. The detail that saves the most time is WHICH anchor
-broke — and on this site that is never a CSS selector, because the parser
-does not read the DOM at all.
+justjoin.it changing its endpoint or payload is the normal way this stops
+working, and it has its own issue template. The detail that saves the most
+time is WHICH source broke — and on this site that is never a CSS selector,
+because the parser reads JSON, not the DOM.
 
-There are **three** structured sources here, and a break is usually in one
-of them and not the others:
+There are **two** structured sources here, and a break is usually in one of
+them and not the other:
 
-1. **`<script id="__NEXT_DATA__">` and its `nonce`.** Every page on this
-   site carries a nonce on that tag, so a regex written without one matches
-   nothing — and the failure reads like the site having stopped
-   server-rendering rather than like a typo. `extract_next_data()` returning
-   None on a page you can see rows in is the symptom.
+1. **The same-origin endpoint `justjoin.it/api/candidate-api/`** — offers,
+   one offer by slug, and the facet counts. This is what `--route api` (the
+   default) reads. Note that `api.justjoin.it`, the `baseApiUrl` the page
+   config names, answered HTTP 503 to every request tried; the scraper
+   refuses it with that reason.
 
-2. **The React Query cache path** —
-   `props.pageProps.dehydratedState.queries[*].state.data.listings` on
-   `/explore`, `props.pageProps.role` on a detail page,
-   `props.pageProps.jobs` on `/careers`. Every query is searched rather than
-   only `queries[0]`, because a cache's order is an implementation detail of
-   whichever component prefetched first. A rename here goes QUIET: rows stop
-   appearing rather than appearing wrong. `CORE_FIELDS` in the engines is
-   the guard — a 99% floor on the four columns Mercor filled on 390 of 390
-   captured records.
+2. **The rendered listing page's payload** (`--route ssr`), which spells the
+   same offer differently: bare skill strings with no levels,
+   `multilocation` instead of `locations`, an integer `categoryId`, and no
+   languages. `data_source` records which route a row came from.
 
-3. **The `JobPosting` JSON-LD on a detail page**, which is the only source
-   that states a **currency**. Note what it is NOT read for: its
-   `baseSalary.value.unitText` said `HOUR` on 3 of 40 sampled pages whose
-   own `payRateFrequency` was `per-task`, and it omits `baseSalary`
-   entirely for `one-time` pay. Period and amounts come from the record;
-   only the currency and the schema.org employment type come from here.
-
-The `ItemList` JSON-LD on `/explore` is deliberately **not** a source. It
-indexed 326 URLs against 390 records on 2026-09-18, omitting all 55
-`evergreen` listings plus 9 standard. If a future change makes it the
-LARGER view, that means the React Query path has started dropping rows —
-`listing_meta()` warns on exactly that inversion.
+`CORE_FIELDS` in the engines is the guard for a rename that goes QUIET —
+rows that stop carrying `title`, `url`, `sku` or `company_name` rather than
+rows that stop appearing.
 
 ## Before this repository goes public
 
@@ -100,7 +86,7 @@ Then the rest of the presentation, in the order that matters:
    secret: every route this scraper reads is served to a bare GitHub runner,
    so it runs a real 3-page scrape daily and is expected to be GREEN. That
    is not a convenience — it is what keeps the README's central claim
-   honest. If Mercor ever puts these routes behind a challenge or a key, the
+   honest. If justjoin.it ever puts these routes behind a challenge or a key, the
    badge goes red the next morning and the claim is retested without anyone
    having to remember to.
 2. The repo description, homepage and topics set (see the family notes on
@@ -116,89 +102,44 @@ Then the rest of the presentation, in the order that matters:
 file of plain functions with inline HTML/JSON fixtures — no pytest, no
 conftest, no fixtures directory. Copy the nearest existing check and edit it.
 
-Six properties in this repo exist because they were once absent or were
-measured against expectation, and cost real time. Tests pin all six, so a PR
-that breaks one will fail rather than silently regress:
+Several properties in this repo exist because they were measured against
+expectation. Tests pin them, so a PR that breaks one will fail rather than
+silently regress. The README's "Traps that look like bugs" section has the
+measurements; the short version:
 
-- **A marker that matches every page is worse than no marker**, and this
-  repo made that mistake and caught it within the hour. Mercor is fronted by
-  Cloudflare, and `/cdn-cgi/challenge-platform` appears **once on every one
-  of seven captures** — `/explore`, `/careers`, the homepage, two detail
-  pages and BOTH 404s. It is Cloudflare's ordinary bot-management beacon,
-  not a challenge. With it in `BOT_CHALLENGE_MARKERS`, asking for a listing
-  that no longer exists reported exit 3 (blocked) instead of `not_found`,
-  which sends a reader hunting for a proxy problem that does not exist.
+- **A marker that matches a good page is worse than no marker.** Every
+  candidate in `BOT_CHALLENGE_MARKERS` was counted across seven captures and
+  is zero on all of them; the set is a tripwire for a change, not a
+  description of something seen. `akamai` is NOT carried, because a served
+  offer page names Akamai Linode four times in its job description.
+  `cf-turnstile` is NOT carried either: 2Captcha's Scraping Browser injects
+  it into every page it loads. Before adding any marker: count it on a page
+  you know is good.
 
-  `challenges.cloudflare.com` was 0 on all seven and is what is carried.
-  `cf-turnstile` is NOT, and that is deliberate rather than an oversight:
-  2Captcha's Scraping Browser injects it into every page it loads, and two
-  sibling repos measured it firing on good pages while being ABSENT from
-  real challenges. `smoke_test.py` pins both directions — no marker may fire
-  on a page the site served, and the excluded string must really be PRESENT
-  on one, or excluding it would be a precaution against nothing.
+- **The salary is selected by `currencySource: "original"`, never by
+  position.** It is not first on 321 of 1,000 listing records and 29 of 40
+  detail records, and indexing `[0]` reads a converted figure in the wrong
+  currency.
 
-  Before adding any marker: count it on a page you know is good.
+- **`from`/`to` are monthly; `fromPerUnit`/`toPerUnit` are in `unit`.**
+  Reading adjacent keys together says "18,480 PLN per hour" for a job paying
+  110 an hour. `salary_min`/`salary_max` carry the quoted rate and the
+  monthly figure lives in `salary_monthly_*`.
 
-- **Mercor's own captcha IS configured on the marketplace host, and a
-  capture cannot see it.** `www.mercor.com` runs none at all — measured in
-  a live browser, zero captcha requests on the home page and on `/careers`
-  — so this applies to `--mode listings` and `--mode job` only.
-  Invisible reCAPTCHA **Enterprise**, sitekey
-  `6LcUUCgsAAAAAD_LMM5QDj1qUwsfKYDbNKa0v5wO`, `size=invisible`, found
-  through `___grecaptcha_cfg` on the first live run. The sitekey is in no
-  served HTML and in none of the eagerly-loaded JS bundles — it arrives in a
-  lazily loaded chunk — so grepping a saved page for the site's own captcha
-  config finds nothing, and only a real browser reveals it.
+- **Every query is capped at 10,000 results**, and `from=10000` answers HTTP
+  500 rather than an empty page. The planner stops at the ceiling, and the
+  sidecar records the cap arithmetic so "complete" is never mistaken for
+  "exhaustive".
 
-  A v3 widget renders no challenge frame and never blocks, so it must never
-  be paid for. The `already_rendered` gate is what enforces that, and it is
-  only as good as the selector it counts with: the first live run had a
-  readiness selector that matched the SERVED markup and not the hydrated
-  DOM, so it read 0 anchors on a page holding all 390 rows and went to
-  "attempting to solve". With a key set, that is a charge per page for
-  nothing.
+- **`?page=2` on a rendered listing page silently returns page 1.** `--route
+  ssr` therefore plans exactly one page.
 
-- **Anything anchored to the DOM must be checked in a real browser.**
-  Hydration rewrites every job anchor on this site: the server sends
-  `href="/jobs/list_…"` and React replaces it with
-  `href="/explore?listingId=…"`. A saved capture is the PRE-hydration
-  document, so a selector verified against one can match zero elements
-  live — silently, because the rows come from `__NEXT_DATA__` either way.
+- **An undisclosed salary is null, never zero**, and a null `apply_url` on a
+  `form` offer means "apply on justjoin.it", not a missing field.
 
 - **Never write that a captcha cannot be solved.** Write that this repo does
-  not implement X. 2Captcha solves enterprise reCAPTCHA
-  (`RecaptchaV2EnterpriseTaskProxyless`) and Cloudflare Turnstile
-  (`TurnstileTaskProxyless`), and this repo builds both. A detection without
-  a sitekey **refuses to build a task** rather than paying for one the API
-  will reject.
-
-- **Gating is per ROUTE, not per site.** `/role/…`, `/jobs` and
-  `/jobs/{id}-{slug}` are served to a residential exit; `/company/{slug}` is
-  refused to one, to plain HTTP and to a real browser alike, 3 of 3 each.
-  There is no `--mode company` and adding one would need a measurement, not
-  an idea.
-
-- **Walking past the last page does not fail — it repeats.** `?page=48` of a
-  47-page listing answers HTTP 200 carrying page 1's rows again. Two
-  defences, and the second is the one to keep: runs plan against the site's
-  own `pageCount`, and the response states which page the SERVER used inside
-  its Apollo cache key, so a mismatch is an unambiguous end-of-listing rather
-  than a "no new sku" heuristic.
-
-- **`/jobs` has no addressable pages, and `/role/…` does.** `?page=2` on the
-  feed returns the identical 46 job ids as page 1 — it does not fail and does
-  not empty. `page_flow.pagination_is_addressable()` answers per URL for
-  exactly this reason; a `page_url()` used unconditionally would report a
-  complete multi-page run holding one page several times.
-
-- **Pay is a rendered STRING, and three of its shapes break a naive
-  parser.** The `•` separates salary from equity and either side may be
-  absent (2 of 312 values are an equity range with no salary at all, so
-  taking the part before the bullet writes 0.5 into a salary column). `L` is
-  the Indian lakh, 1e5 — `₹30L – ₹80L` is 3,000,000 to 8,000,000. And
-  `No equity` is a STATEMENT: `has_equity=False` is a fact the listing
-  published, `None` is silence. `salary_period` stays null on a listing row
-  because the string carries no period; only the detail page states one.
+  not implement X. justjoin.it configures reCAPTCHA v2 on its application
+  form only; 2Captcha solves that with `RecaptchaV2TaskProxyless`.
 
 Plus the family's own invariants, which are not negotiable:
 
@@ -220,57 +161,48 @@ Plus the family's own invariants, which are not negotiable:
 
 Most do not — the suite covers the parser, the writers, the captcha
 classifier and the CLI contract against inline fixtures. If yours genuinely
-needs mercor.com, say in the PR what you ran, which mode and URL, from
-which exit, and what you got — including the sidecar's `records_in_payload`
-and `urls_in_itemlist` (or `jobs_enumerated`/`jobs_fetched` for `--mode
-job`) and the coverage lines the run prints.
+needs justjoin.it, say in the PR what you ran, which mode, route and filters,
+from which exit, and what you got — including the sidecar's cap figures
+(`total_results`, `site_total`, `capped_by_site`) and the coverage lines the
+run prints.
 
-Four things about running this live that are specific to Mercor:
+Things about running this live that are specific to justjoin.it:
 
-* **You need nothing.** No key, no proxy, no account. Every route was
-  served to a bare Hetzner datacentre address on 2026-09-18, to `curl`, to
-  `python-requests` and to an empty User-Agent. If a run is refused, that
-  is NEW, and the saved debug HTML is the finding — say so in the issue
-  rather than reaching for a proxy.
+* **You need nothing.** No key, no proxy, no account. Every route this
+  scraper reads was served to a bare datacentre address on 2026-09-18. If a
+  run is refused, that is NEW, and the saved debug HTML is the finding — say
+  so in the issue rather than reaching for a proxy. The one exception is a
+  `Python-urllib/*` User-Agent, which gets HTTP 403.
 * **Selenium cannot send proxy credentials.** `--proxy-server` takes an
-  address only, so that engine strips them and warns. This matters less
-  here than on most sites, because no proxy is needed at all — but if you
-  are testing the proxy path, that is the limitation.
-* **The slot counters are live and drift within minutes.** Two runs of
-  `--mode listings` a few minutes apart differed on exactly one row:
-  `remaining_slots` 30 → 29 and `supplied_slots` 0 → 1, because a
-  contractor was supplied in between. A small difference between two runs
-  is the site, not a regression. The ORDER, by contrast, was measured
-  stable — three fetches returned the identical 390 ids in the identical
-  order.
-* **Be polite about `--mode job`.** It can fetch 462 detail pages. There is
-  no rate limiting that we found, which is a reason to be careful rather
-  than a licence: use `--delay`, and do not run the full enumeration to
-  test a one-line change.
+  address only, so that engine strips them and warns.
+* **The sort decides which offers you get**, because every query is capped.
+  Two runs under different `--sort` values are different samples, and
+  `diff_runs.py` refuses to compare them.
+* **Be polite about `--mode offer`.** Use `--delay`, and do not run a full
+  enumeration to test a one-line change.
 
 **Run more than the primary engine.** "Mirror them exactly" is a design rule,
 not a verification, and running the mirrors for the first release found two
 defects that import, `--help`, `compileall` and the whole offline suite all
-missed. All three were run live across all three modes and returned
-identical rows; that is the bar.
+missed. All three were run live and returned byte-identical rows; that is
+the bar.
 
-Do not add anything that submits a form. Mercor's pages carry an apply
-flow and a sign-up flow, and this project must never touch either — an
-application submitted by a scraper is a false record about a real person and
-a real company.
+Do not add anything that submits a form. justjoin.it's offer pages carry an
+application form, and this project must never touch it — an application
+submitted by a scraper is a false record about a real person and a real
+company.
 
 ## Scope
 
-This repo scrapes **public pages** on mercor.com: the marketplace index, the
-jobs feed and individual job pages, exactly as an anonymous visitor is served
-them. It reads only routes `robots.txt` allows.
+This repo reads **public job offers** on justjoin.it: the offers endpoint,
+single offers, the facet counts and the rendered listing page, exactly as an
+anonymous visitor is served them. Note that the endpoint sits under
+`/api/`, which `robots.txt` disallows; the README says so, and `--route ssr`
+stays entirely within robots.txt.
 
 Out of scope: anything behind a login, anything that submits a form
-(including the apply and sign-up flows), anything that defeats a protection
-rather than passing it the way an ordinary browser does, and candidate
-profiles — `/u/` is disallowed by `robots.txt`, there is deliberately no mode
-for it, and adding one would be a product decision about personal data rather
-than a bug fix.
+(including the job application), and anything that defeats a protection
+rather than passing it the way an ordinary browser does.
 
 ## Licence
 
