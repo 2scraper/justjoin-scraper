@@ -11,8 +11,8 @@
 # the exact output shape without installing anything.
 !sample_output.json
 !sample_output.csv
-wellfound_jobs.*
-wellfound_jobs_*.*
+justjoin_jobs.*
+justjoin_jobs_*.*
 
 # --- the live-test harness's working directory ---------------------------
 live_results/
