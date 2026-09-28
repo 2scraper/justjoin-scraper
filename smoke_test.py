@@ -1566,14 +1566,14 @@ def check_exit_codes():
           (3, 4, 5, 6))
     check("page_cap_reached is a COMPLETE stop reason",
           "page_cap_reached" in O.COMPLETE_STOP_REASONS)
-    # `/explore` and `/careers` are each served at ONE address holding
-    # their whole result set — measured, not assumed: every pagination
-    # parameter tried returned a byte-identical payload — so a run that
-    # stopped after one fetch fetched the whole route.
+    # `--mode facets` is one request, and `--route ssr` serves one page and
+    # answers `?page=2` with page 1 again — measured, not assumed — so a run
+    # that stopped after one fetch fetched the whole route.
     check("single_page_route is complete by construction AND by measurement",
           "single_page_route" in O.COMPLETE_STOP_REASONS)
-    # Carried for the family's shared vocabulary and unreachable here: this
-    # site cannot clamp an out-of-range page back, having only one.
+    # Carried for the family's shared vocabulary: a rendered listing echoes
+    # page 1 for `?page=2`, which is what this names. `--route ssr` plans one
+    # page, so a run should never reach it.
     check("page_echo_mismatch is complete",
           "page_echo_mismatch" in O.COMPLETE_STOP_REASONS)
     check("...and an enumeration that yielded nothing is NOT complete",
@@ -1598,7 +1598,7 @@ def check_a_run_that_finds_nothing_writes_nothing():
         equal("--allow-empty WRITES the empty file...", 
               json.load(open(prefix + ".json", encoding="utf-8")), [])
         # ...and still reports exit 4. Pinned deliberately (§10: pin a known
-        # behaviour rather than half-guarding it): "zero businesses" is true
+        # behaviour rather than half-guarding it): "zero offers" is true
         # whether or not the file was written, and a caller that wanted the
         # file still wants to know the result was empty.
         equal("...and still reports exit 4, because it IS empty", code, 4)
@@ -1606,24 +1606,28 @@ def check_a_run_that_finds_nothing_writes_nothing():
 
 def check_sidecar_shape():
     from output_writer import run_meta
+    # Values from a real `--route ssr` run's sidecar, 2026-09-18.
     meta = run_meta(status="complete", stop_reason="single_page_route",
                     pages_requested=1, pages_completed=1, pages_failed=[],
-                    products=390, mode="listings", source="mercor.com",
-                    start_url="https://work.mercor.com/explore",
-                    final_url="https://work.mercor.com/explore",
-                    extra={"records_in_payload": 390, "urls_in_itemlist": 326,
+                    products=100, mode="listings", source="justjoin.it",
+                    start_url="https://justjoin.it/job-offers/all-locations",
+                    final_url="https://justjoin.it/job-offers/all-locations",
+                    extra={"total_results": 10000, "site_total": 19388,
+                           "capped_by_site": True,
                            "pages_available": 1, "route_is_paginated": False})
     for key in ("status", "stop_reason", "pages_requested", "pages_completed",
                 "pages_failed", "mode", "source"):
         check("the sidecar records %r" % key, key in meta)
-    equal("the sidecar carries how many records the payload held",
-          meta["records_in_payload"], 390)
-    # Both views, because the response has two and they disagree. Without
-    # the second number a reader cannot tell that the site's own structured
-    # index is 64 entries short of its own payload — which is the whole
-    # reason this scraper does not read that index.
-    equal("...and how many the site's own ItemList indexed",
-          meta["urls_in_itemlist"], 326)
+    equal("the sidecar carries how many results the query matched",
+          meta["total_results"], 10000)
+    # Both figures, because every query is capped at 10,000 while the board
+    # holds more. Without the second number a reader cannot tell that a
+    # "complete" run is about half the board (CLAUDE.md §21: complete and
+    # exhaustive are different words).
+    equal("...and how many offers the whole board held",
+          meta["site_total"], 19388)
+    equal("...and whether the site's cap bounded the query",
+          meta["capped_by_site"], True)
     equal("...and whether this route is addressable page by page",
           meta["route_is_paginated"], False)
     equal("pages_failed is a LIST of numbers, not a count",
@@ -2474,9 +2478,9 @@ def check_every_solve_is_counted_against_the_budget():
     really is gated. Only the second was counted, and the first therefore
     bought a solve on every block attempt, for free, silently.
 
-    INHERITED from a sibling repo, not measured here — Mercor refuses
-    nothing, so this repo has no such run. Measured there 2026-09-17 from a
-    datacenter address, which meets a real
+    INHERITED from a sibling repo (wellfound-scraper), not measured here —
+    justjoin.it refuses nothing, so this repo has no such run. Measured
+    there 2026-09-17 from a datacenter address, which meets a real
     Cloudflare challenge on every fetch: one page bought THREE Turnstile
     solves before the fix and ONE after, with the cap set to 1 both times.
     Every token was refused either way, so the three purchases bought
@@ -2567,7 +2571,7 @@ def check_a_dead_proxy_is_reported_as_a_proxy_failure():
 def check_engines_do_not_evaluate_a_string_in_the_browser():
     """§18: a site whose CSP omits `unsafe-eval` kills wait_for_function with
     an EvalError and takes the run down with exit 1, on the site's most
-    obvious URL. Mercor has not been measured for that, and the cheap habit
+    obvious URL. justjoin.it has not been measured for that, and the cheap habit
     costs nothing on a site that would have allowed it."""
     for module in ENGINES:
         path = os.path.join(HERE, module + ".py")
@@ -2765,7 +2769,7 @@ def check_no_statement_is_unreachable():
 
 def main():
     global VERBOSE
-    parser = argparse.ArgumentParser(description="mercor-scraper offline suite")
+    parser = argparse.ArgumentParser(description="justjoin-scraper offline suite")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     VERBOSE = args.verbose
