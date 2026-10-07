@@ -11,7 +11,14 @@ burying it.
 
 ## [Unreleased]
 
-> **Behaviour changes.** CSV output now prefixes a cell that starts with
+## [0.1.4]
+
+> **Behaviour changes for existing users.** `--route ssr` now refuses, with
+> exit 2, any filter other than category, city, remote and keyword (it used
+> to accept them and ignore them). `diff_runs.py` now refuses a run with no
+> sidecar unless `--force` is passed. `--retries 0` is refused.
+>
+> CSV output now prefixes a cell that starts with
 > `=`, `+`, `-`, `@`, a tab, CR or LF with an apostrophe (JSON is
 > unchanged), and the sidecar gains `csv_cells_escaped`. `.env.example`
 > no longer sets `JUSTJOIN_URL`; a `JUSTJOIN_URL` from the environment that
@@ -20,6 +27,20 @@ burying it.
 
 ### Fixed
 
+- **An offer queue no longer ends at the first delisted offer** (all three
+  engines). A 404 on one offer was read as the end of the run.
+- **`--mode offer` works in Selenium and pyppeteer**, and pyppeteer no
+  longer crashes without a proxy pool.
+- **`--route ssr` no longer accepts filters it ignores**, and no longer
+  records a sort, order or total the page does not carry.
+- **`--mode facets` is partial when a group is missing**, and the parity
+  engines now request the categories.
+- **`diff_runs.py` refuses runs without a sidecar**, and tells an absent
+  `filters` key from an empty one. Engines always record `filters`.
+- **The Scraper API client writes a sidecar** and picks the row class by
+  mode (its facets CSV had the wrong header).
+- **Output writes are atomic.** A failed write no longer replaces the
+  previous good JSON, CSV or sidecar with a truncated one.
 - **CSV cells are formula-escaped.** Every string in a row is written by an
   employer, and a spreadsheet runs a cell starting with `=`, `+`, `-` or
   `@` as a formula. Escaped in the CSV only, after list cells are joined;
