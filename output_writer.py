@@ -106,8 +106,11 @@ Everything below the dataclass is row-class-agnostic: pass `row_cls` so an
 empty CSV still gets the right header for the mode that produced it.
 """
 
+import contextlib
 import csv
 import json
+import os
+import tempfile
 from dataclasses import dataclass, asdict, field, fields
 from datetime import datetime, timezone
 from typing import Optional, List, Set, Sequence, Any, Tuple, Type
@@ -515,8 +518,62 @@ def _csv_cell(v: Any) -> Tuple[Any, bool]:
     return v, False
 
 
+def _target_mode(path: str) -> int:
+    """The permissions the finished file should have.
+
+    `NamedTemporaryFile` creates 0600 and a rename keeps it, so without this
+    every output would come out readable by its owner only — a cron job
+    writing for another user, or a CI step uploading as a different one,
+    would find the file there and be unable to read it. Keep the mode the
+    previous file had; for a first write use what `open()` would have given
+    (0666 minus the umask).
+    """
+    try:
+        return os.stat(path).st_mode & 0o7777
+    except OSError:
+        mask = os.umask(0)
+        os.umask(mask)
+        return 0o666 & ~mask
+
+
+@contextlib.contextmanager
+def _atomic(path: str, newline: Optional[str] = None):
+    """Write to a temporary file beside `path`, then rename over it.
+
+    Every write here replaces a file a previous run may have left, and the
+    invariant this module protects is that a bad run never destroys last
+    night's good data (`save` refuses to overwrite with an empty result for
+    the same reason). `open(path, "w")` truncates before the first byte is
+    written, so a kill, a full disk or a crash halfway through `json.dump`
+    leaves a SHORTER file where a complete one was — and the sidecar beside
+    it, which a consumer branches on, still describes the old good run.
+
+    `os.replace` is atomic within one filesystem, so the temporary file is
+    created in the target's OWN directory; one under /tmp may be on another,
+    where a rename degrades to an interruptible copy. `fsync` before the
+    rename makes it hold after a power loss and not only after a crash.
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", newline=newline, dir=directory,
+        prefix=os.path.basename(path) + ".", suffix=".tmp", delete=False)
+    try:
+        with handle:
+            yield handle
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(handle.name, _target_mode(path))
+        os.replace(handle.name, path)
+    except BaseException:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
+
 def write_json(rows: Sequence[Any], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    with _atomic(path) as f:
         json.dump([asdict(r) for r in rows], f, ensure_ascii=False, indent=2)
 
 
@@ -529,7 +586,7 @@ def write_csv(rows: Sequence[Any], path: str, row_cls: Type = JobPosting) -> int
     # The header comes from `row_cls`, not from the first row, so an empty
     # run still writes the columns of the mode that produced it.
     fieldnames = [f.name for f in fields(row_cls)]
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    with _atomic(path, newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         escaped = 0
@@ -629,7 +686,7 @@ def write_run_meta(out_prefix: str, meta: dict) -> str:
     both complete, and between runs of different `mode`.
     """
     path = f"{out_prefix}.meta.json"
-    with open(path, "w", encoding="utf-8") as f:
+    with _atomic(path) as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"[+] Wrote run metadata -> {path} (status={meta.get('status')})")
     return path

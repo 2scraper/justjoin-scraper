@@ -1472,6 +1472,114 @@ def output_writer_facets_url():
     return pp.facets_api_url()
 
 
+# ---------------------------------------------------------------------------
+# Output writes are atomic
+# ---------------------------------------------------------------------------
+#
+# `open(path, "w")` truncates before a byte is written, so a crash halfway
+# through `json.dump` replaced last night's good file with a shorter one. The
+# sidecar is the part that matters most: it is the file a consumer branches on.
+
+def check_a_crash_during_a_write_leaves_the_previous_file_whole():
+    import output_writer as ow
+    with tempfile.TemporaryDirectory() as tmp:
+        good_rows = [ow.JobPosting(source="s", scraped_at="t", url="u",
+                                   sku="a")]
+        paths = {"json": os.path.join(tmp, "o.json"),
+                 "csv": os.path.join(tmp, "o.csv"),
+                 "meta": os.path.join(tmp, "o.meta.json")}
+        ow.write_json(good_rows, paths["json"])
+        ow.write_csv(good_rows, paths["csv"])
+        ow.write_run_meta(os.path.join(tmp, "o"), {"status": "complete"})
+        before = {k: open(p, "rb").read() for k, p in paths.items()}
+
+        class Unserialisable:
+            pass
+
+        def attempt(label, fn):
+            try:
+                fn()
+            except BaseException:
+                pass
+            else:
+                check("%s: the planted failure was raised" % label, False)
+
+        attempt("json", lambda: ow.write_json([object()], paths["json"]))
+        attempt("csv", lambda: ow.write_csv([object()], paths["csv"]))
+        attempt("meta", lambda: ow.write_run_meta(
+            os.path.join(tmp, "o"), {"status": Unserialisable()}))
+        for k, p in paths.items():
+            check("%s: the previous file is byte-identical after a failed "
+                  "write" % k, open(p, "rb").read() == before[k])
+        left = [n for n in os.listdir(tmp) if n.endswith(".tmp")]
+        check("and no temporary file is left behind", not left, str(left))
+
+
+def check_an_atomic_write_keeps_the_files_permissions():
+    """The temporary file is created 0600 and a rename keeps that. Measured in
+    the sibling repos that adopted this writer: every output came out
+    owner-only."""
+    import output_writer as ow
+    if not hasattr(os, "chmod") or os.name == "nt":
+        skip("permissions", "no POSIX modes here")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        row = [ow.JobPosting(source="s", scraped_at="t", url="u", sku="a")]
+        fresh = os.path.join(tmp, "fresh.json")
+        ow.write_json(row, fresh)
+        mask = os.umask(0)
+        os.umask(mask)
+        equal("a new file gets what open() would have given",
+              os.stat(fresh).st_mode & 0o777, 0o666 & ~mask)
+        kept = os.path.join(tmp, "kept.json")
+        ow.write_json(row, kept)
+        os.chmod(kept, 0o640)
+        ow.write_json(row, kept)
+        equal("an existing file keeps its own mode",
+              os.stat(kept).st_mode & 0o777, 0o640)
+
+
+def check_every_output_write_goes_through_the_atomic_helper():
+    import ast
+    import inspect
+    import output_writer as ow
+    for name in ("write_json", "write_csv", "write_run_meta"):
+        tree = ast.parse(inspect.getsource(getattr(ow, name)).lstrip())
+        opens = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", None) == "open"]
+        atomics = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                   and getattr(n.func, "id", None) == "_atomic"]
+        check("%s writes through _atomic" % name, bool(atomics))
+        check("and has no bare open()", not opens)
+    tree = ast.parse(inspect.getsource(ow._atomic).lstrip())
+    attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    check("the temp file is created in the target's own directory",
+          "dir" in {k.arg for n in ast.walk(tree) if isinstance(n, ast.Call)
+                    for k in n.keywords})
+    check("it is fsynced and renamed", {"fsync", "replace"} <= attrs)
+
+
+def check_the_csv_newline_survives_the_atomic_write():
+    """Without `newline=""` the csv module's own \\r\\n gains a second CR per
+    row on Windows. POSIX never translates, so no run here can show the fault;
+    this reads the two places that carry it instead of pretending to measure
+    it."""
+    import ast
+    import inspect
+    import output_writer as ow
+    tree = ast.parse(inspect.getsource(ow.write_csv).lstrip())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and getattr(n.func, "id", None) == "_atomic"]
+    kw = {k.arg: k.value for c in calls for k in c.keywords}
+    check("write_csv asks _atomic for newline=''",
+          isinstance(kw.get("newline"), ast.Constant)
+          and kw["newline"].value == "", repr(kw))
+    tree = ast.parse(inspect.getsource(ow._atomic).lstrip())
+    passed = [k for n in ast.walk(tree) if isinstance(n, ast.Call)
+              for k in n.keywords if k.arg == "newline"]
+    check("and _atomic hands it to the temporary file", bool(passed))
+
+
 def check_the_404_is_not_a_block():
     """An offer taken down between the sitemap and the fetch is ordinary."""
     equal("state", pp.detect_page_state(NOT_FOUND_JSON, 404,
