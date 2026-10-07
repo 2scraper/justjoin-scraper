@@ -555,6 +555,361 @@ def check_a_delisted_offer_is_read_from_the_body_when_there_is_no_status():
               "a status is captured and then not used")
 
 
+# ---------------------------------------------------------------------------
+# The queue: one delisted offer must not end it
+# ---------------------------------------------------------------------------
+#
+# Every earlier check of the 404 handling asserted that the CLASSIFIER named
+# the state (`not_found`). None of them drove a loop over it, so a third-party
+# audit found what 600 green checks had not: a good -> 404 -> good queue
+# fetched two of its three offers, wrote one row, and reported `complete` with
+# `stop_reason: no_new_products`. These checks run the real `scrape()` of every
+# engine that is installed, with the driver and the per-page fetch stubbed.
+
+def _drive_scrape(engine, argv, outcome_for):
+    """Run `engine.scrape` on `argv` and return (exit, urls fetched, sidecar).
+
+    `outcome_for(url)` -> (state, [skus]) says what each fetched URL "served".
+    Only the browser session and the per-page fetch are replaced; the loop
+    that decides what a page means for the REST of the queue is the real one.
+    """
+    import contextlib
+    import shutil
+
+    class FakeSession:
+        def __init__(self, *a, **k):
+            self.pool = None
+
+        def open(self):
+            return self
+
+        def close(self):
+            pass
+
+        def relaunch(self):
+            pass
+
+    class FakeBridge:
+        def close(self):
+            pass
+
+    class FakeCtx:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *a):
+            return False
+
+    fetched = []
+
+    def fake_fetch(session, args, pool, page_num, url):
+        fetched.append(url)
+        state, skus = outcome_for(url)
+        outcome = engine.PageOutcome(page_num=page_num, url=url)
+        outcome.state = state
+        outcome.final_url = url
+        outcome.pages_available = 10
+        outcome.products = [
+            JobPosting(sku=sku, title=sku, page=page_num, position=i + 1)
+            for i, sku in enumerate(skus)]
+        return outcome
+
+    patches = {"_fetch_one_page": fake_fetch,
+               "_fetch_text": lambda s, u, **k: "",
+               "_fetch_page_source": lambda s, u, **k: ""}
+    for name in ("_BrowserSession", "_Session"):
+        if hasattr(engine, name):
+            patches[name] = FakeSession
+    if hasattr(engine, "_AsyncBridge"):
+        patches["_AsyncBridge"] = FakeBridge
+    if hasattr(engine, "sync_playwright"):
+        patches["sync_playwright"] = lambda: FakeCtx()
+
+    saved = {k: getattr(engine, k) for k in patches if hasattr(engine, k)}
+    saved_argv = sys.argv[:]
+    tmp = tempfile.mkdtemp(prefix="jj_queue_")
+    try:
+        for key, value in patches.items():
+            setattr(engine, key, value)
+        out = os.path.join(tmp, "run")
+        sys.argv = [engine.__name__ + ".py"] + argv + ["--out", out,
+                                                       "--delay", "0",
+                                                       "--format", "json"]
+        args = engine.parse_args()
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = engine.scrape(args)
+        meta_path = out + ".meta.json"
+        meta = (json.load(open(meta_path, encoding="utf-8"))
+                if os.path.exists(meta_path) else None)
+        return code, fetched, meta
+    finally:
+        sys.argv = saved_argv
+        for key, value in saved.items():
+            setattr(engine, key, value)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _offer_queue_file(slugs):
+    handle = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
+                                         prefix="jj_slugs_")
+    handle.write("\n".join(slugs) + "\n")
+    handle.close()
+    return handle.name
+
+
+def check_the_queue_decision_table():
+    """The one function every loop now asks, pinned as a table."""
+    qd = page_flow.queue_decision
+    # Independent pages (--mode offer with a queue): nothing ends the queue.
+    for state in ("content", "empty", "not_found", "cap_exceeded", None):
+        for fresh in (0, 5, None):
+            equal("independent page, state=%s fresh=%s" % (state, fresh),
+                  qd(state, fresh, True), None)
+    # A listing: a terminal state or a page that adds nothing ends it.
+    equal("a listing 404 ends it, and says so",
+          qd("not_found", 0, False), "not_found")
+    equal("past the cap ends it, and says so",
+          qd("cap_exceeded", None, False), "cap_exceeded")
+    equal("a page with nothing new ends it", qd("content", 0, False),
+          "no_new_products")
+    equal("a page with something new does not", qd("content", 3, False), None)
+    equal("page 1 (fresh unknown) is not judged on freshness",
+          qd("content", None, False), None)
+    # What counts as independent.
+    equal("offer + a queue", page_flow.pages_are_independent("offer", ["a"]),
+          True)
+    equal("offer + NO queue (a single --url) is not",
+          page_flow.pages_are_independent("offer", []), False)
+    equal("a listing never is",
+          page_flow.pages_are_independent("listings", ["a", "b"]), False)
+
+
+def check_a_delisted_offer_does_not_cut_the_queue_in_any_engine():
+    """good/404/good, 404/good/good and good/good/404, through each engine's
+    own loop. All three offers must be REQUESTED, the two live ones written,
+    and the run must end `completed` — not `no_new_products`."""
+    ran = 0
+    shapes = {
+        "404 in the middle": ["a", "gone", "b"],
+        "404 FIRST (a sitemap whose head has been taken down)":
+            ["gone", "a", "b"],
+        "404 last": ["a", "b", "gone"],
+    }
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        for label, slugs in shapes.items():
+            path = _offer_queue_file(slugs)
+            try:
+                def outcome_for(url):
+                    if url.endswith("/gone"):
+                        return "not_found", []
+                    return "content", [url.rsplit("/", 1)[-1]]
+                code, fetched, meta = _drive_scrape(
+                    engine, ["--mode", "offer", "--slugs-file", path,
+                             "--pages", "3"], outcome_for)
+            finally:
+                os.unlink(path)
+            ran += 1
+            tag = "%s, %s" % (module, label)
+            equal("%s: every offer was requested" % tag, len(fetched), 3)
+            equal("%s: exit 0" % tag, code, 0)
+            check("%s: a sidecar was written" % tag, meta is not None)
+            if meta is None:
+                continue
+            equal("%s: the live offers were written" % tag,
+                  meta["products"], 2)
+            equal("%s: the run ended because the queue did, not because a "
+                  "page was empty" % tag, meta["stop_reason"], "completed")
+            equal("%s: the sidecar names the offer that was not found" % tag,
+                  meta.get("offers_not_found"), 1)
+    if ran == 0:
+        skip("offer queue", "no engine library installed here")
+
+
+def check_a_listing_that_repeats_itself_still_ends_the_run():
+    """The control for the other direction. If `independent` were applied to
+    everything, a listing answering page 2 with page 1 again would be
+    re-collected for as long as it was asked to, and reported complete."""
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+
+        def outcome_for(url):
+            return "content", ["same-offer"]
+        code, fetched, meta = _drive_scrape(
+            engine, ["--category", "python", "--pages", "3",
+                     "--per-page", "1"], outcome_for)
+        equal("%s: page 3 was never requested" % module, len(fetched), 2)
+        check("%s: a sidecar was written" % module, meta is not None)
+        if meta is not None:
+            equal("%s: it says why it stopped" % module,
+                  meta["stop_reason"], "no_new_products")
+            equal("%s: and holds the one row" % module, meta["products"], 1)
+
+
+def check_the_concurrent_workers_agree_about_a_delisted_offer():
+    """The Playwright engine's concurrent path set the same "end of listing"
+    event on a 404 that the sequential loop tripped over."""
+    engine = _import_engine("playwright_scraper")
+    if engine is None:
+        return
+    import threading
+
+    class Args:
+        delay = 0
+        retries = 1
+        retry_delay = 0
+        out = "unused"
+        mode = "offer"
+
+    seen = []
+    lock = threading.Lock()
+
+    def fake_fetch(session, args, pool, page_num, url):
+        with lock:
+            seen.append(page_num)
+        outcome = engine.PageOutcome(page_num=page_num, url=url)
+        gone = page_num == 3
+        outcome.state = "not_found" if gone else "content"
+        outcome.products = [] if gone else [object()]
+        return outcome
+
+    class FakeSession:
+        def __init__(self, *a, **k):
+            self.pool = None
+
+        def open(self):
+            return self
+
+        def close(self):
+            pass
+
+    class FakeCtx:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *a):
+            return False
+
+    saved = (engine._fetch_one_page, engine._BrowserSession,
+             engine.sync_playwright)
+    engine._fetch_one_page = fake_fetch
+    engine._BrowserSession = FakeSession
+    engine.sync_playwright = lambda: FakeCtx()
+    try:
+        specs = [(n, "u%d" % n) for n in range(2, 9)]
+        results, unattempted, exhausted = engine._fetch_pages_concurrently(
+            Args(), None, specs, 3)
+    finally:
+        (engine._fetch_one_page, engine._BrowserSession,
+         engine.sync_playwright) = saved
+    equal("every queued offer was fetched, one of them a 404",
+          sorted(seen), list(range(2, 9)))
+    equal("nothing was left unattempted", unattempted, [])
+    equal("and dispatch was not stopped", exhausted, False)
+
+
+def check_no_engine_touches_the_pool_without_asking_whether_there_is_one():
+    """A run with no proxy has `pool = None`. Any `pool.<attr>` reached on that
+    path is an AttributeError traceback (exit 1) where the run should have
+    reported the failure it was handling (exit 5).
+
+    It was reached twice in one family of code. v0.1.0 fixed `mask(pool.current)`
+    in the block-retry branch of the two parity engines, and the same engine
+    still had `pool.advance(...)` unguarded two screens up, on the path every
+    navigation failure takes: `block_retries` is 1 without a pool, not 0, so
+    the test `block_attempt < block_retries` was true exactly when there was
+    nothing to rotate to. A live `--mode offer` run found it, because its
+    first address was bad. No offline check could: the per-page fetch is the
+    thing a stub replaces.
+
+    So assert it statically, on every engine: each `pool.<attr>` must sit under
+    something that has asked about `pool` or `has_pool` first — an `if`, a
+    conditional expression, or the left side of an `and`.
+    """
+    names = ("pool", "has_pool")
+
+    def mentions(node):
+        return any(isinstance(n, ast.Name) and n.id in names
+                   for n in ast.walk(node))
+
+    for module in ENGINES:
+        path = os.path.join(HERE, module + ".py")
+        if not os.path.exists(path):
+            continue
+        tree = ast.parse(open(path, encoding="utf-8").read())
+        parent = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parent[child] = node
+
+        accesses = [n for n in ast.walk(tree)
+                    if isinstance(n, ast.Attribute)
+                    and isinstance(n.value, ast.Name) and n.value.id == "pool"]
+        check("%s: the scan found pool accesses to judge" % module,
+              len(accesses) >= 5, "%d found" % len(accesses))
+
+        def enclosing_function(node):
+            while node in parent:
+                node = parent[node]
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    return node
+            return None
+
+        def falsy_when_no_pool(function):
+            """Names a function sets to a FALSY value when there is no pool:
+            `proxy = f(pool.current) if pool else None`. Testing such a name
+            is asking about the pool. `block_retries = ... if has_pool else 1`
+            is NOT one — its else is truthy, which is exactly the shape of the
+            defect this check exists for, so it must not count."""
+            found = set()
+            for n in ast.walk(function):
+                if (isinstance(n, ast.Assign) and isinstance(n.value, ast.IfExp)
+                        and mentions(n.value.test)
+                        and isinstance(n.value.orelse, ast.Constant)
+                        and not n.value.orelse.value):
+                    found.update(t.id for t in n.targets
+                                 if isinstance(t, ast.Name))
+            return found
+
+        unguarded = []
+        for access in accesses:
+            function = enclosing_function(access)
+            derived = falsy_when_no_pool(function) if function else set()
+
+            def asks(test):
+                return mentions(test) or any(
+                    isinstance(n, ast.Name) and n.id in derived
+                    for n in ast.walk(test))
+
+            guarded, cur = False, access
+            # An early exit ahead of the access guards everything after it:
+            # `if not pool: return None`.
+            for stmt in (function.body if function else []):
+                if (isinstance(stmt, ast.If) and stmt.lineno < access.lineno
+                        and mentions(stmt.test) and stmt.body
+                        and isinstance(stmt.body[-1], (ast.Return, ast.Raise))):
+                    guarded = True
+            while cur in parent and not guarded:
+                par = parent[cur]
+                if isinstance(par, (ast.If, ast.While)) and cur is not par.test:
+                    guarded = asks(par.test)
+                elif isinstance(par, ast.IfExp) and cur is par.body:
+                    guarded = asks(par.test)
+                elif isinstance(par, ast.BoolOp):
+                    earlier = par.values[:par.values.index(cur)]
+                    guarded = any(asks(v) for v in earlier)
+                cur = par
+            if not guarded:
+                unguarded.append("line %d: pool.%s" % (access.lineno,
+                                                      access.attr))
+        check("%s: every pool.<attr> is guarded" % module, not unguarded,
+              "; ".join(unguarded))
+
+
 def check_the_404_is_not_a_block():
     """An offer taken down between the sitemap and the fetch is ordinary."""
     equal("state", pp.detect_page_state(NOT_FOUND_JSON, 404,
@@ -1482,7 +1837,8 @@ def check_policy_constants_have_a_consumer():
                "should_retry", "should_solve", "counts_as_blocked",
                "should_parse", "concurrency_limit", "concurrency_for_mode",
                "pagination_is_addressable", "plan_page_urls",
-               "enumerate_offers", "needs_readiness_wait", "is_terminal"):
+               "enumerate_offers", "needs_readiness_wait", "queue_decision",
+               "pages_are_independent"):
         check("page_flow.%s has a caller outside its own module" % fn,
               fn in joined, "unused policy")
 
@@ -1493,7 +1849,8 @@ def check_policy_constants_have_a_consumer():
     # whether ANYTHING reads them, and the answer has to come from the
     # module's own source rather than from the engines'.
     own = open(os.path.join(HERE, "page_flow.py"), encoding="utf-8").read()
-    for fn in ("pages_to_plan", "max_offset_for", "mask_secrets"):
+    for fn in ("pages_to_plan", "max_offset_for", "mask_secrets",
+               "is_terminal"):
         calls = own.count(fn + "(")
         check("page_flow.%s is called, not merely defined" % fn,
               calls >= 2, "%d occurrence(s) — only its own def" % calls)

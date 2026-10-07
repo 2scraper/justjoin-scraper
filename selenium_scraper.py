@@ -921,36 +921,49 @@ def scrape(args) -> int:
                     mode=args.mode, source=SOURCE_DEFAULT,
                     start_url=args.url or "", final_url="")
             total_enumerated = len(offer_slugs)
-            target = offer_slugs[0]
+            # A slug is not an address. Both parity engines assigned it bare,
+            # so `--mode offer` over the sitemap "navigated" to a string like
+            # `acme-dev-warszawa-java` and ended in exit 5 (Selenium) or a
+            # traceback (pyppeteer). Playwright built the URL; this does too.
+            first_url = detail_api_url(offer_slugs[0])
+            if first_url:
+                target = first_url
 
-        if target != args.url:
-            logger.info("Fetching %s", target)
+        if args.url and target != args.url:
+            logger.info("Reading %s through %s — the endpoint is the "
+                        "route with pagination, and the filters your URL "
+                        "names are carried over to it.", args.url, target)
+        logger.info("Fetching %s", target)
 
-            # The board-wide total, for the cap arithmetic. One extra
-            # request, and it buys the difference between a sidecar that
-            # says "complete" and one that says "complete, and a 52%
-            # sample". Never fatal.
-            if args.mode == "listings":
-                try:
-                    site_total = parse_count_response(
-                        _fetch_page_source(session, count_api_url()))
-                except Exception as exc:  # noqa: BLE001
-                    logger.info("The board-wide count did not load (%s); the "
-                                "run continues without the cap share.",
-                                _mask_credentials(str(exc))[:120])
+        # The board-wide total, for the cap arithmetic. One extra
+        # request, and it buys the difference between a sidecar that
+        # says "complete" and one that says "complete, and a 52%
+        # sample". Never fatal.
+        if args.mode == "listings":
+            try:
+                site_total = parse_count_response(
+                    _fetch_page_source(session, count_api_url()))
+            except Exception as exc:  # noqa: BLE001
+                logger.info("The board-wide count did not load (%s); the "
+                            "run continues without the cap share.",
+                            _mask_credentials(str(exc))[:120])
 
         first = _fetch_one_page(session, args, pool, 1, target)
         outcomes.append(first)
 
+        independent = page_flow.pages_are_independent(args.mode, offer_slugs)
+        first_verdict = page_flow.queue_decision(first.state, None, independent)
         if not first.ok:
             stop_reason = ("page_load_timeout" if first.load_failed
                            else f"blocked_{first.blocked_by}")
             blocked = first.blocked_by is not None
-        elif page_flow.is_terminal(first.state):
-            # A 404, or an offset past the site's 10,000 ceiling. Another
-            # attempt at the same address cannot help and neither is a
-            # block, so the run stops and says which it was.
-            stop_reason = first.state
+        elif first_verdict:
+            # A 404, or an offset past the site's 10,000 ceiling: another
+            # attempt at the same address cannot help and neither is a block.
+            # Not applied to an offer heading a queue of OTHER offers — one
+            # delisted slug must not cancel the run
+            # (`page_flow.queue_decision`).
+            stop_reason = first_verdict
         elif args.mode == "offer" and not offer_slugs:
             pass  # `--url` named one offer; one page is the whole run
         else:
@@ -983,11 +996,17 @@ def scrape(args) -> int:
                                   if p.sku is None or p.sku not in seen_keys)
                 seen_keys.update(p.sku for p in outcome.products
                                  if p.sku is not None)
-                if not fresh_count:
-                    logger.info("Page %d added no rows not already seen — "
-                                "treating that as the end of the listing.",
-                                page_num)
-                    stop_reason = "no_new_products"
+                # ONE decision, shared with the first page and with the other
+                # engines, about whether this page ends the queue. In --mode
+                # offer it never does: every page is a different offer, and a
+                # 404 is an offer taken down between the sitemap and the
+                # fetch. This engine had no such exemption at all.
+                verdict = page_flow.queue_decision(outcome.state, fresh_count,
+                                                   independent)
+                if verdict:
+                    logger.info("Page %d (%s) ends the queue: %s.",
+                                page_num, outcome.state, verdict)
+                    stop_reason = verdict
                     break
 
                 if index + 1 < len(planned):
@@ -1097,6 +1116,16 @@ def scrape(args) -> int:
     elif args.mode == "offer":
         extra["offers_enumerated"] = total_enumerated or None
         extra["offers_fetched"] = len(ok_pages)
+        # Which pages of the queue were an offer the site no longer has. A 404
+        # is ordinary here — the sitemap is generated ahead of the fetch — so
+        # it does not make the run partial, but it is not invisible either:
+        # `offers_fetched` counts pages that ANSWERED, and without this a
+        # consumer cannot tell an answer of "gone" from an offer that was read.
+        not_found = sorted(o.page_num for o in outcomes
+                           if o.state == "not_found")
+        extra["offers_not_found"] = len(not_found)
+        if not_found:
+            extra["offers_not_found_pages"] = not_found
 
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,

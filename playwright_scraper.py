@@ -1406,6 +1406,9 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
     # 45 empty ones. Workers check it before taking more work, so at most
     # (concurrency - 1) extra pages are in flight when it trips.
     exhausted = threading.Event()
+    # Every queued page is its own offer in --mode offer, so a 404 or an empty
+    # one says nothing about the next — see page_flow.queue_decision.
+    independent = page_flow.pages_are_independent(args.mode, specs)
 
     def worker(index: int):
         name = f"worker-{index + 1}"
@@ -1426,10 +1429,12 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
                                                   page_num, url)
                         with results_lock:
                             results.append(outcome)
-                        if outcome.ok and not outcome.products:
-                            logger.info("[%s] page %d returned no rows — "
-                                        "treating that as the end of the listing "
-                                        "and stopping dispatch.", name, page_num)
+                        if outcome.ok and page_flow.queue_decision(
+                                outcome.state, len(outcome.products),
+                                independent):
+                            logger.info("[%s] page %d (%s) ends the listing — "
+                                        "stopping dispatch.", name, page_num,
+                                        outcome.state)
                             exhausted.set()
                 finally:
                     session.close()
@@ -1589,14 +1594,20 @@ def scrape(args) -> int:
             first = _fetch_one_page(session, args, pool, 1, target)
             outcomes.append(first)
 
+            independent = page_flow.pages_are_independent(args.mode,
+                                                          offer_slugs)
+            first_verdict = page_flow.queue_decision(first.state, None,
+                                                     independent)
             if not first.ok:
                 stop_reason = ("page_load_timeout" if first.load_failed
                                else f"blocked_{first.blocked_by}")
                 blocked = first.blocked_by is not None
-            elif page_flow.is_terminal(first.state):
+            elif first_verdict:
                 # Terminal by nature: another attempt at the same address
-                # cannot help, and neither is a block.
-                stop_reason = first.state
+                # cannot help, and neither is a block. NOT applied to an
+                # offer that heads a queue of other offers — one delisted
+                # slug must not cancel the run (`page_flow.queue_decision`).
+                stop_reason = first_verdict
             elif args.mode == "offer" and not offer_slugs:
                 pass  # `--url` named one offer; one page is the whole run
             else:
@@ -1662,15 +1673,6 @@ def scrape(args) -> int:
                                            else f"blocked_{outcome.blocked_by}")
                             blocked = outcome.blocked_by is not None
                             break
-                        if page_flow.is_terminal(outcome.state):
-                            # `not_found` is ordinary in --mode offer: an
-                            # offer taken down between the sitemap being
-                            # read and its record being fetched. It ends
-                            # THIS page, not the run.
-                            if args.mode != "offer" or outcome.state != "not_found":
-                                stop_reason = outcome.state
-                                break
-
                         # Whether this page contributed anything not already
                         # seen. Kept as a running check because the
                         # condition is inherently sequential — "new" only
@@ -1682,17 +1684,23 @@ def scrape(args) -> int:
                         seen_keys.update(p.sku for p in outcome.products
                                          if p.sku is not None)
 
-                        # A page past the first that contributes nothing new
-                        # means the end of the results — or that pagination
-                        # is looping back on itself. Either way there is
-                        # nothing further to fetch, and this is the honest
-                        # terminating condition: a property of the DATA, not
-                        # of a CSS selector that may have been renamed.
-                        if not fresh_count:
-                            logger.info("Page %d added no rows not already seen "
-                                        "— treating that as the end of the "
-                                        "results.", page_num)
-                            stop_reason = "no_new_products"
+                        # ONE decision, shared with the first page and the
+                        # concurrent workers, about whether this page ends the
+                        # queue: a terminal state, or a page that adds nothing
+                        # new (a property of the DATA, not of a selector).
+                        # In --mode offer neither applies,
+                        # because every page is a different offer: a 404 is an
+                        # offer taken down between the sitemap and the fetch.
+                        # This used to exempt not_found from the first test and
+                        # then trip the second one two lines later, so a single
+                        # delisted offer cut the run short and left it
+                        # `complete`.
+                        verdict = page_flow.queue_decision(
+                            outcome.state, fresh_count, independent)
+                        if verdict:
+                            logger.info("Page %d (%s) ends the queue: %s.",
+                                        page_num, outcome.state, verdict)
+                            stop_reason = verdict
                             break
 
                         if page_num - 1 < len(planned):
@@ -1816,6 +1824,16 @@ def scrape(args) -> int:
     elif args.mode == "offer":
         extra["offers_enumerated"] = total_enumerated or None
         extra["offers_fetched"] = len(ok_pages)
+        # Which pages of the queue were an offer the site no longer has. A 404
+        # is ordinary here — the sitemap is generated ahead of the fetch — so
+        # it does not make the run partial, but it is not invisible either:
+        # `offers_fetched` counts pages that ANSWERED, and without this a
+        # consumer cannot tell an answer of "gone" from an offer that was read.
+        not_found = sorted(o.page_num for o in outcomes
+                           if o.state == "not_found")
+        extra["offers_not_found"] = len(not_found)
+        if not_found:
+            extra["offers_not_found_pages"] = not_found
 
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,

@@ -250,6 +250,54 @@ def is_terminal(state: str) -> bool:
     return state in ("not_found", "cap_exceeded")
 
 
+def pages_are_independent(mode: str, queued) -> bool:
+    """True when every queued page is its OWN offer rather than a slice of one
+    result set.
+
+    In `--mode offer` a "page" is one offer fetched from an enumerated list,
+    so nothing one page says — empty, repeated, or 404 — is evidence about
+    the next. In a listing the opposite holds: a page that adds nothing new
+    IS evidence that the listing has ended.
+
+    A single `--url` offer has no queue behind it, so it is not "independent"
+    in this sense: there is nothing to continue to, and its 404 should still
+    be the reason the run stopped.
+    """
+    return mode == "offer" and bool(queued)
+
+
+def queue_decision(state: Optional[str], fresh_rows: Optional[int],
+                   independent: bool) -> Optional[str]:
+    """What a finished page says about the REST of the queue.
+
+    Returns the `stop_reason` that ends the queue, or None to carry on. One
+    function, called from every place an engine finishes a page — the first
+    page, the sequential loop and the concurrent workers — because it used to
+    be re-spelt at each of them, and the copies disagreed in the way that
+    matters:
+
+      * the Playwright loop skipped the terminal check for an offer's 404 and
+        then applied "this page added no new rows, so the listing ended" two
+        lines later, so one delisted offer silently cut the queue short and
+        the run reported `complete` with `stop_reason: no_new_products`;
+      * its concurrent worker set the same "end of listing" event on a 404;
+      * the first page stopped the whole run on a 404, so a sitemap whose
+        first slug had been taken down fetched nothing at all;
+      * the two parity engines had no skip at all.
+
+    `fresh_rows=None` means "do not apply the exhausted-listing rule", which
+    is what the first page wants: its content decides how many pages there
+    are, not whether to stop.
+    """
+    if independent:
+        return None
+    if state is not None and is_terminal(state):
+        return state
+    if fresh_rows is not None and fresh_rows == 0:
+        return "no_new_products"
+    return None
+
+
 # Whether a blocked page is worth re-fetching at all.
 #
 # True, and CONSULTED rather than merely documented — the engines read it,
