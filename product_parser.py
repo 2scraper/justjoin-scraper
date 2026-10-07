@@ -1957,6 +1957,22 @@ def parse_facets_response(text: Optional[str], *,
     return out
 
 
+# Every group the board publishes today: the six in `/offers/facets/count` plus
+# the categories from their own endpoint. A run that returns fewer is not a
+# smaller board, it is an incomplete read — and it is judged on the ROWS, not
+# on how the missing group went missing, so a categories request that failed,
+# a categories body that would not parse and a group the site renamed all
+# land in the same place. (The first version of this check asked only whether
+# the categories REQUEST had raised, which covers one of the three.)
+EXPECTED_FACET_GROUPS = FACET_GROUPS + (CATEGORY_FACET_GROUP,)
+
+
+def missing_facet_groups(rows: Sequence[Any]) -> List[str]:
+    """The expected facet groups that no row carries."""
+    present = {getattr(r, "facet_group", None) for r in rows}
+    return [g for g in EXPECTED_FACET_GROUPS if g not in present]
+
+
 def parse_count_response(text: Optional[str]) -> Optional[int]:
     """The board-wide offer count from `/offers/count`."""
     payload = parse_json(text)

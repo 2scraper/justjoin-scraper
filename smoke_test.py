@@ -610,9 +610,12 @@ def _drive_scrape(engine, argv, outcome_for, side=None):
         outcome.state = state
         outcome.final_url = url
         outcome.pages_available = 10
+        # A plain string is a sku (a JobPosting is built for it); anything
+        # else is a ready-made row, which is how --mode facets supplies Facets.
         outcome.products = [
-            JobPosting(sku=sku, title=sku, page=page_num, position=i + 1)
-            for i, sku in enumerate(skus)]
+            row if not isinstance(row, str)
+            else JobPosting(sku=row, title=row, page=page_num, position=i + 1)
+            for i, row in enumerate(skus)]
         return outcome
 
     def record(session, url, **kwargs):
@@ -1147,6 +1150,141 @@ def check_the_ssr_route_never_requests_a_path_robots_txt_disallows():
                       hit, [])
     if ran == 0:
         skip("ssr robots", "no engine library installed here")
+
+
+# ---------------------------------------------------------------------------
+# --mode facets: a missing group is a partial run, not a complete one
+# ---------------------------------------------------------------------------
+#
+# Two findings, one defect class. An audit traced that a failed request for
+# the category counts is caught, logged, and the run continues as `complete`.
+# Running the mode through the other engines then showed Selenium and
+# pyppeteer never made that request at all: 57 rows against 82, every time.
+# The missing group is the one the README's plan for reaching past the
+# 10,000-offer cap is built from.
+
+def _facet_rows(with_categories=True, drop=()):
+    rows = pp.parse_facets_response(
+        FACETS_JSON,
+        categories_text=CATEGORIES_JSON if with_categories else None)
+    return [r for r in rows if r.facet_group not in drop]
+
+
+def check_missing_facet_groups_are_judged_on_the_rows():
+    equal("a full read misses nothing",
+          pp.missing_facet_groups(_facet_rows()), [])
+    equal("no categories request, no categories group",
+          pp.missing_facet_groups(_facet_rows(with_categories=False)),
+          ["categories"])
+    equal("a group the site stopped publishing is named too",
+          pp.missing_facet_groups(_facet_rows(drop=("languages",))),
+          ["languages"])
+    equal("several, in the order the groups are expected",
+          pp.missing_facet_groups(
+              _facet_rows(with_categories=False, drop=("workingTimes",))),
+          ["workingTimes", "categories"])
+    # A categories body that arrives and will not parse is the same loss by a
+    # different road, and the judgement must not depend on which one it was.
+    broken = pp.parse_facets_response(FACETS_JSON,
+                                      categories_text="<html>502</html>")
+    equal("an unparseable categories body is a missing group, not a crash",
+          pp.missing_facet_groups(broken), ["categories"])
+    equal("the expected set is the seven the board publishes",
+          sorted(pp.EXPECTED_FACET_GROUPS),
+          sorted(set(pp.FACET_GROUPS) | {pp.CATEGORY_FACET_GROUP}))
+
+
+def check_a_facets_run_missing_a_group_is_partial_in_every_engine():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        cases = [("complete read", _facet_rows(), 0, "complete", None),
+                 ("no categories", _facet_rows(with_categories=False), 6,
+                  "partial", ["categories"]),
+                 ("a renamed group", _facet_rows(drop=("languages",)), 6,
+                  "partial", ["languages"])]
+        for label, rows, want_exit, want_status, want_missing in cases:
+            code, fetched, meta = _drive_scrape(
+                engine, ["--mode", "facets"], lambda url, rows=rows:
+                ("content", rows))
+            ran += 1
+            tag = "%s, %s" % (module, label)
+            equal("%s: exit" % tag, code, want_exit)
+            check("%s: a sidecar was written" % tag, meta is not None)
+            if meta is None:
+                continue
+            equal("%s: status" % tag, meta["status"], want_status)
+            equal("%s: the sidecar names what is missing" % tag,
+                  meta.get("missing_groups"), want_missing)
+            if want_missing:
+                equal("%s: and why the run stopped" % tag,
+                      meta["stop_reason"], "facet_groups_missing")
+                equal("%s: the groups that DID arrive were still written"
+                      % tag, meta["products"], len(rows))
+            else:
+                equal("%s: a clean read stops as a one-page route" % tag,
+                      meta["stop_reason"], "single_page_route")
+    if ran == 0:
+        skip("facets partial", "no engine library installed here")
+
+
+def check_every_engine_asks_for_the_category_counts():
+    """The Selenium and pyppeteer engines imported `FACETS_JOIN` and
+    `categories_api_url` and used neither. Driven through each engine's own
+    `_fetch_body` so an engine that forgets the second request fails here
+    instead of shipping 57 rows as a complete run."""
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        requested = []
+
+        def snapshot(*a, **k):
+            return FACETS_JSON
+
+        def text_ok(session, url, **k):
+            requested.append(url)
+            return CATEGORIES_JSON
+
+        def text_down(session, url, **k):
+            requested.append(url)
+            # The type each engine really catches: Playwright's own Error,
+            # and anything at all from the two whose drivers raise many.
+            raise getattr(engine, "PWError", RuntimeError)(
+                "net::ERR_CONNECTION_RESET")
+
+        saved = (engine._snapshot, engine._fetch_text)
+        args = _types.SimpleNamespace(mode="facets")
+        session = _types.SimpleNamespace(page=None, driver=None)
+        try:
+            engine._snapshot = snapshot
+            engine._fetch_text = text_ok
+            joined = engine._fetch_body(session, args, "u")
+            engine._fetch_text = text_down
+            degraded = engine._fetch_body(session, args, "u")
+            engine._fetch_text = text_ok
+            other = engine._fetch_body(
+                session, _types.SimpleNamespace(mode="listings"), "u")
+        finally:
+            engine._snapshot, engine._fetch_text = saved
+        ran += 1
+        check("%s: categories are requested from their own endpoint" % module,
+              any(pp.CATEGORIES_PATH in u for u in requested), str(requested))
+        check("%s: and joined onto the facet body" % module,
+              pp.FACETS_JOIN in joined)
+        equal("%s: so a parsed run carries all seven groups" % module,
+              len({r.facet_group for r in pp.parse_for_mode(
+                  joined, "", _types.SimpleNamespace(
+                      mode="facets", route="api", per_page=1), 1)[0]}), 7)
+        equal("%s: a failed request degrades to the bare facet body" % module,
+              degraded, FACETS_JSON)
+        equal("%s: and no other mode asks at all" % module, other,
+              FACETS_JSON)
+    if ran == 0:
+        skip("facets body", "no engine library installed here")
 
 
 def check_the_404_is_not_a_block():

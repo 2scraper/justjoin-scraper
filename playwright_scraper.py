@@ -126,7 +126,7 @@ from product_parser import (API_PATH, MODES, DEFAULT_MODE, ROUTES,
                             sitemap_is_index, sitemap_locs,
                             sitemap_offer_slugs, sku_from_url,
                             user_agent_is_refused)
-from product_parser import args_problem
+from product_parser import args_problem, missing_facet_groups
 from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
                            ROW_CLASS_BY_MODE, SOURCE_DEFAULT)
 import page_flow
@@ -374,10 +374,9 @@ def _fetch_body(session, args, url: str) -> str:
         try:
             categories = _fetch_text(session, categories_api_url())
         except (PWError, PWTimeout) as exc:
-            logger.warning("The category counts did not load (%s); the facet "
-                           "groups are still complete. Categories will be "
-                           "absent from this run rather than wrong.",
-                           _mask_credentials(str(exc))[:120])
+            logger.warning("The category counts did not load (%s); the run "
+                           "will be partial rather than silently missing "
+                           "them.", _mask_credentials(str(exc))[:120])
             return body
         if categories.strip():
             return body + FACETS_JOIN + categories
@@ -1240,6 +1239,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         return outcome
 
     products, listing = parse_for_mode(body, session.page.url, args, page_num)
+    if args.mode == "facets":
+        gone = missing_facet_groups(products)
+        if gone:
+            logger.warning("The facet response is missing %s. The groups that "
+                           "arrived are written, and the run is partial: "
+                           "categories are what a plan for reaching past the "
+                           "10,000 cap is built from.", ", ".join(gone))
     logger.info("Parsed %d row(s) from page %d.", len(products), page_num)
 
     if listing is not None:
@@ -1803,6 +1809,17 @@ def scrape(args) -> int:
                     "" if done >= total_enumerated
                     else "  Pass --pages %d to cover the rest." % total_enumerated)
 
+    # A facets run that lacks a group is partial, not complete. `stop_reason`
+    # is deliberately NOT one of COMPLETE_STOP_REASONS, so finish_run reports
+    # status partial and exit 6 through the family's own rule
+    # rather than through a special case here.
+    # Judged on the MERGED rows, not on any one response, so the verdict does
+    # not depend on how a group went missing (see EXPECTED_FACET_GROUPS).
+    missing_groups = (missing_facet_groups(all_rows)
+                      if args.mode == "facets" and all_rows else [])
+    if missing_groups:
+        stop_reason = "facet_groups_missing"
+
     ok_pages = [o for o in outcomes if o.ok]
     failed_pages = [o.page_num for o in outcomes if not o.ok]
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
@@ -1844,6 +1861,8 @@ def scrape(args) -> int:
             filters.pop("cityRadius", None)
         if filters:
             extra["filters"] = filters
+    elif args.mode == "facets" and missing_groups:
+        extra["missing_groups"] = missing_groups
     elif args.mode == "offer":
         extra["offers_enumerated"] = total_enumerated or None
         extra["offers_fetched"] = len(ok_pages)
