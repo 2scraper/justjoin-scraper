@@ -1302,8 +1302,10 @@ def scrape(args) -> int:
             # a city and no radius, so claiming one was applied would be the
             # same overstatement as claiming a filter it ignored.
             filters.pop("cityRadius", None)
-        if filters:
-            extra["filters"] = filters
+        # ALWAYS recorded, even when empty. `diff_runs.py` reads the absence of
+        # this key as "this run did not say", which it must be able to tell
+        # apart from "this run used no filters".
+        extra["filters"] = filters
     elif args.mode == "facets" and missing_groups:
         extra["missing_groups"] = missing_groups
     elif args.mode == "offer":

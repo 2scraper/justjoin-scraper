@@ -1287,6 +1287,191 @@ def check_every_engine_asks_for_the_category_counts():
         skip("facets body", "no engine library installed here")
 
 
+# ---------------------------------------------------------------------------
+# diff_runs: no sidecar is not a pass
+# ---------------------------------------------------------------------------
+#
+# `_check_comparable` skipped a run whose sidecar was missing ("nothing to
+# check"), but every check it makes — complete?, which mode?, sorted and
+# filtered how?, capped? — lives in that sidecar. Its absence removed all the
+# guards at once and the diff went ahead as if each had passed. The leniency
+# had one real cause, which no longer exists: scraper_api_client.py wrote no
+# sidecar. It does now.
+
+def _write_run(tmp, name, rows, meta=None):
+    path = os.path.join(tmp, name + ".json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(rows, fh)
+    if meta is not None:
+        with open(os.path.join(tmp, name + ".meta.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(meta, fh)
+    return path
+
+
+def _diff(old, new, *extra):
+    import contextlib
+    import diff_runs
+    saved = sys.argv[:]
+    out = io.StringIO()
+    try:
+        sys.argv = ["diff_runs.py", "--old", old, "--new", new] + list(extra)
+        with contextlib.redirect_stdout(out):
+            code = diff_runs.main()
+    finally:
+        sys.argv = saved
+    return code, out.getvalue()
+
+
+def _meta(**over):
+    base = {"mode": "listings", "status": "complete",
+            "stop_reason": "completed", "pages_requested": 1,
+            "pages_completed": 1, "pages_failed": [], "sort": "publishedAt",
+            "order": "descending", "filters": {}}
+    base.update(over)
+    return base
+
+
+def check_diff_runs_refuses_a_run_with_no_sidecar():
+    rows = [{"sku": "a", "title": "x", "data_source": "api"}]
+    with tempfile.TemporaryDirectory() as tmp:
+        bare_old = _write_run(tmp, "bare_old", rows)
+        bare_new = _write_run(tmp, "bare_new", rows)
+        good = _write_run(tmp, "good", rows, _meta())
+
+        code, out = _diff(bare_old, bare_new)
+        equal("two bare JSON files are refused", code, 2)
+        check("and the reason says what is missing",
+              ".meta.json" in out and "--force" in out, out[-200:])
+        code, out = _diff(bare_old, good)
+        equal("one bare file is refused too", code, 2)
+        code, out = _diff(good, bare_new)
+        equal("on either side", code, 2)
+        check("the message names the file that lacks it",
+              "bare_new" in out, out[-200:])
+        code, _ = _diff(bare_old, bare_new, "--force")
+        equal("--force is the explicit way round", code, 0)
+        code, _ = _diff(good, good)
+        equal("two runs WITH sidecars still diff", code, 0)
+
+
+def check_diff_runs_tells_unknown_filters_from_none():
+    """An engine run that used no filters records `filters: {}`; a sidecar that
+    does not mention filters at all did not SAY. Those are different, and
+    treating them alike either refuses a comparison that is fine or waves
+    through one that is not."""
+    rows = [{"sku": "a", "title": "x", "data_source": "api"}]
+    with tempfile.TemporaryDirectory() as tmp:
+        none_a = _write_run(tmp, "none_a", rows, _meta(filters={}))
+        none_b = _write_run(tmp, "none_b", rows, _meta(filters={}))
+        python = _write_run(tmp, "python", rows,
+                            _meta(filters={"categories": "python"}))
+        silent = _write_run(tmp, "silent", rows,
+                            {k: v for k, v in _meta().items()
+                             if k != "filters"})
+        code, _ = _diff(none_a, none_b)
+        equal("none against none is comparable", code, 0)
+        code, out = _diff(none_a, python)
+        equal("none against a filter is refused", code, 2)
+        check("naming the filters", "categories" in out, out[-250:])
+        code, out = _diff(python, silent)
+        equal("a run that did not say is compared, not refused", code, 0)
+        check("and the diff says the selections could not be compared",
+              "did not record which filters" in out, out[-250:])
+
+
+def check_every_engine_records_its_filters_even_when_there_are_none():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        _, _, meta = _drive_scrape(engine, ["--pages", "1"],
+                                   lambda url: ("content", ["a"]))
+        ran += 1
+        check("%s: a sidecar was written" % module, meta is not None)
+        if meta is not None:
+            check("%s: an unfiltered run records `filters` as empty, not as "
+                  "nothing" % module, meta.get("filters") == {},
+                  repr(meta.get("filters", "<absent>")))
+    if ran == 0:
+        skip("recorded filters", "no engine library installed here")
+
+
+# ---------------------------------------------------------------------------
+# scraper_api_client: it writes a sidecar, and picks the row class by mode
+# ---------------------------------------------------------------------------
+
+def _drive_client(url, mode, body, fmt="json"):
+    import contextlib
+    import shutil
+    import scraper_api_client as client
+    tmp = tempfile.mkdtemp(prefix="jj_client_")
+    saved_fetch, saved_argv = client.fetch_html, sys.argv[:]
+    try:
+        client.fetch_html = lambda args: (body, 200)
+        out = os.path.join(tmp, "run")
+        sys.argv = ["scraper_api_client.py", "--url", url, "--mode", mode,
+                    "--key", "not-a-real-key", "--out", out, "--format", fmt]
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = client.main()
+        meta_path = out + ".meta.json"
+        meta = (json.load(open(meta_path, encoding="utf-8"))
+                if os.path.exists(meta_path) else None)
+        files = sorted(os.listdir(tmp))
+        csv_head = None
+        if os.path.exists(out + ".csv"):
+            csv_head = open(out + ".csv", encoding="utf-8").readline().strip()
+        return code, meta, files, csv_head
+    finally:
+        client.fetch_html, sys.argv = saved_fetch, saved_argv
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def check_the_scraper_api_client_writes_a_sidecar():
+    code, meta, files, _ = _drive_client(
+        pp.api_url(items=7), "listings", LISTING_JSON)
+    equal("a listings run through the client exits 0", code, 0)
+    check("and leaves a sidecar beside it", meta is not None, str(files))
+    if meta is not None:
+        equal("status", meta["status"], "complete")
+        equal("mode", meta["mode"], "listings")
+        equal("it says it went through the Scraper API", meta.get("route"),
+              "scraper_api")
+        equal("and how many rows", meta["products"], 7)
+    # What a consumer can then DO with it.
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = [{"sku": "a", "title": "x", "data_source": "api"}]
+        a = _write_run(tmp, "a", rows, meta or _meta())
+        b = _write_run(tmp, "b", rows, meta or _meta())
+        code, _ = _diff(a, b)
+        equal("so diff_runs accepts a client run beside a client run", code, 0)
+
+
+def check_the_scraper_api_client_marks_a_facets_run_partial_and_writes_csv():
+    """One URL fetched, so the category counts — a second endpoint — are never
+    in the body. The run is partial by construction and must say so. Through
+    `save` it also wrote the CSV with the JobPosting header, which fails on
+    the first Facet row."""
+    code, meta, files, csv_head = _drive_client(
+        output_writer_facets_url(), "facets", FACETS_JSON, fmt="both")
+    equal("a facets run through the client is partial", code, 6)
+    check("a sidecar was written", meta is not None, str(files))
+    if meta is not None:
+        equal("status", meta["status"], "partial")
+        equal("it names the missing group", meta.get("missing_groups"),
+              ["categories"])
+        equal("and why it stopped", meta["stop_reason"],
+              "facet_groups_missing")
+    check("the CSV has the Facet header, not the JobPosting one",
+          csv_head and csv_head.startswith("source,scraped_at,url,sku,title,"
+                                           "facet_group"), str(csv_head))
+
+
+def output_writer_facets_url():
+    return pp.facets_api_url()
+
+
 def check_the_404_is_not_a_block():
     """An offer taken down between the sitemap and the fetch is ordinary."""
     equal("state", pp.detect_page_state(NOT_FOUND_JSON, 404,

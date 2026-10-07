@@ -326,9 +326,10 @@ def _print_summary(result: dict) -> None:
 def _run_status(path: str) -> Tuple[Optional[str], Optional[dict]]:
     """Read the `<out>.meta.json` sidecar beside a run's JSON output.
 
-    Returns (status, meta), or (None, None) when there is no sidecar — which
-    is the normal case for output written before run metadata existed, or by
-    `scraper_api_client.py` (single fetch, no pagination to cut short).
+    Returns (status, meta), or (None, None) when there is no sidecar — output
+    written before run metadata existed, or a sidecar that was deleted or
+    never copied beside the JSON. `_check_comparable` treats that as a reason
+    to refuse, not as a pass.
     """
     meta_path = re.sub(r"\.json$", "", path) + ".meta.json"
     try:
@@ -354,7 +355,25 @@ def _check_comparable(args) -> bool:
     for label, path in (("--old", args.old), ("--new", args.new)):
         status, meta = _run_status(path)
         if status is None:
-            continue  # no sidecar: nothing to check, see _run_status
+            # No sidecar is NOT "nothing to check". Everything this function
+            # checks — whether the run was complete, which mode it was, how it
+            # was sorted and filtered, whether the result set was capped —
+            # lives in that file, so its absence removes every guard at once
+            # and the diff proceeds exactly as if all of them had passed. Two
+            # bare JSON files were accepted with exit 0, and an unfiltered run
+            # beside a filtered one reported hundreds of `removed`.
+            #
+            # Refused, with --force as the explicit way round. Output written
+            # by scraper_api_client.py used to be the reason for the leniency
+            # (it wrote no sidecar); it writes one now, so that reason is gone.
+            problems.append(
+                f"{label} ({path}) has no .meta.json beside it, so nothing "
+                f"says whether it is complete, which mode it was, or how it "
+                f"was sorted and filtered. Without that, every `removed` line "
+                f"may be an offer that was simply never fetched or fell "
+                f"outside a different selection. Re-run it with a current "
+                f"version, or pass --force to diff it on trust.")
+            continue
         mode = (meta or {}).get("mode")
         if mode:
             modes[label] = mode
@@ -421,8 +440,12 @@ def _check_comparable(args) -> bool:
             sorts[label] = meta["sort"]
         if meta.get("order"):
             orders[label] = meta["order"]
-        if meta.get("mode") == "listings":
-            filters[label] = meta.get("filters") or {}
+        # Only when the run RECORDED its filters. A sidecar that says nothing
+        # about them (written before this field existed) is "unknown", which is
+        # not the same as "none" — treating the two alike either refuses a
+        # comparison that is fine or waves through one that is not.
+        if meta.get("mode") == "listings" and "filters" in meta:
+            filters[label] = meta["filters"] or {}
     if len(set(sorts.values())) > 1:
         problems.append(
             f"the two runs used different orderings ({sorts}). Every query "
@@ -436,6 +459,14 @@ def _check_comparable(args) -> bool:
             f"the two runs used different sort directions ({orders}), which "
             f"on a capped result set means they hold opposite ends of the "
             f"same query.")
+    if len(filters) == 1:
+        # One side recorded its selection and the other did not, so it was not
+        # compared. Said out loud rather than skipped: the diff below is only
+        # as meaningful as the two selections being the same.
+        unknown = "--new" if "--old" in filters else "--old"
+        print(f"[i] {unknown} did not record which filters it used, so the two "
+              f"selections could not be compared. If they differ, `added` and "
+              f"`removed` describe that difference rather than the board.")
     if len(filters) == 2:
         old_f, new_f = filters["--old"], filters["--new"]
         if old_f != new_f:
