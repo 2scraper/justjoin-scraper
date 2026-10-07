@@ -126,6 +126,7 @@ from product_parser import (API_PATH, MODES, DEFAULT_MODE, ROUTES,
                             sitemap_is_index, sitemap_locs,
                             sitemap_offer_slugs, sku_from_url,
                             user_agent_is_refused)
+from product_parser import args_problem
 from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
                            ROW_CLASS_BY_MODE, SOURCE_DEFAULT)
 import page_flow
@@ -1580,7 +1581,15 @@ def scrape(args) -> int:
             # says "complete" and one that says "complete, and a 52%
             # sample". Never fatal: a run without it is
             # still a good run, it just cannot state the share.
-            if args.mode == "listings":
+            # NOT for --route ssr. That route exists to stay inside robots.txt
+            # (which disallows /api/), and this request goes to
+            # /api/candidate-api/offers/count — so the scraper itself was
+            # fetching a disallowed path on the one route documented as
+            # robots-clean. The rendered page no longer states a total
+            # either (its `meta` block is gone, 2026-10-07), so an ssr
+            # sidecar says nothing about the cap rather than something fetched
+            # from the wrong place.
+            if args.mode == "listings" and args.route != "ssr":
                 try:
                     site_total = parse_count_response(
                         _fetch_text(session, count_api_url()))
@@ -1810,15 +1819,29 @@ def scrape(args) -> int:
     if args.mode == "listings":
         extra.update(cap)
         extra["pages_available"] = pages_available
-        extra["items_per_page"] = args.per_page
-        extra["sort"] = args.sort
-        extra["order"] = args.order
+        if args.route == "ssr":
+            # The rendered page serves what the site chose to render — 50 rows
+            # on 2026-10-07, 100 a fortnight earlier — in the site's own order.
+            # `--per-page`, `--sort` and `--order` are refused for this route
+            # (`args_problem`), so recording them here would put three values
+            # in the sidecar that nothing applied. Record what ARRIVED instead.
+            extra["items_per_page"] = (len(outcomes[0].products) or None
+                                       if outcomes else None)
+        else:
+            extra["items_per_page"] = args.per_page
+            extra["sort"] = args.sort
+            extra["order"] = args.order
         # The ordering decides WHICH rows are in the file, not just their
         # order: the same query under `publishedAt` and under `salary`
         # overlapped on 5 of 100 ids (measured 2026-09-18), because each is
         # a different slice of a capped result set. So it is recorded, and
         # `diff_runs.py` refuses to compare two runs that disagree on it.
         filters = filters_from_args(args).as_params()
+        if args.route == "ssr":
+            # A radius is the endpoint's parameter; the page's own path takes
+            # a city and no radius, so claiming one was applied would be the
+            # same overstatement as claiming a filter it ignored.
+            filters.pop("cityRadius", None)
         if filters:
             extra["filters"] = filters
     elif args.mode == "offer":
@@ -2140,23 +2163,12 @@ def parse_args():
         p.error("--per-page must be between 1 and %d; justjoin.it answers "
                 "HTTP 400 above that." % MAX_ITEMS_COUNT)
 
-    if args.mode != "listings":
-        # Refused rather than ignored, so a filtered `--mode offer` run
-        # cannot look like it narrowed the enumeration when it did not.
-        used = [name for name, value in (
-            ("--category", args.category), ("--city", args.city),
-            ("--keyword", args.keyword), ("--remote", args.remote),
-            ("--experience", args.experience), ("--language", args.language),
-            ("--employment", args.employment),
-            ("--working-time", args.working_time),
-            ("--with-salary", args.with_salary)) if value]
-        if used:
-            p.error("%s filter%s the offers endpoint, which --mode %s does "
-                    "not read. Use --mode listings to filter, then --mode "
-                    "offer --slugs-file on its output to fetch those offers "
-                    "in full."
-                    % (", ".join(used), "" if len(used) == 1 else "s",
-                       args.mode))
+    # ONE shared validation (product_parser.args_problem) instead of a copy per
+    # engine: filters outside --mode listings, the filters the rendered route
+    # cannot apply, and --retries 0 (which skipped navigation entirely).
+    problem = args_problem(args)
+    if problem:
+        p.error(problem)
 
     # The sidecar's run label. `--category` is a real site filter here, so
     # unlike the repo this engine was ported from it is NOT reused as the

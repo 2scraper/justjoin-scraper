@@ -566,10 +566,11 @@ def check_a_delisted_offer_is_read_from_the_body_when_there_is_no_status():
 # `stop_reason: no_new_products`. These checks run the real `scrape()` of every
 # engine that is installed, with the driver and the per-page fetch stubbed.
 
-def _drive_scrape(engine, argv, outcome_for):
+def _drive_scrape(engine, argv, outcome_for, side=None):
     """Run `engine.scrape` on `argv` and return (exit, urls fetched, sidecar).
 
     `outcome_for(url)` -> (state, [skus]) says what each fetched URL "served".
+    `side`, if given, collects every request made outside the listing itself.
     Only the browser session and the per-page fetch are replaced; the loop
     that decides what a page means for the REST of the queue is the real one.
     """
@@ -614,9 +615,16 @@ def _drive_scrape(engine, argv, outcome_for):
             for i, sku in enumerate(skus)]
         return outcome
 
+    def record(session, url, **kwargs):
+        # Every request the engine makes OUTSIDE the listing itself — the
+        # board count, a sitemap. `side` lets a check ask what they were.
+        if side is not None:
+            side.append(url)
+        return ""
+
     patches = {"_fetch_one_page": fake_fetch,
-               "_fetch_text": lambda s, u, **k: "",
-               "_fetch_page_source": lambda s, u, **k: ""}
+               "_fetch_text": record,
+               "_fetch_page_source": record}
     for name in ("_BrowserSession", "_Session"):
         if hasattr(engine, name):
             patches[name] = FakeSession
@@ -908,6 +916,237 @@ def check_no_engine_touches_the_pool_without_asking_whether_there_is_one():
                                                       access.attr))
         check("%s: every pool.<attr> is guarded" % module, not unguarded,
               "; ".join(unguarded))
+
+
+# ---------------------------------------------------------------------------
+# --route ssr: only what the rendered page applies, and no request to /api/
+# ---------------------------------------------------------------------------
+#
+# An audit ran `--route ssr --experience senior --with-salary --keyword rust`
+# and found the fetched address was the bare all-locations page, with the
+# sidecar recording all three filters as if they had narrowed it. Measured
+# live afterwards: 23 of 50 rows were senior, 28 of 50 priced, and a sort the
+# page also ignored was written into the sidecar beside them.
+
+import types as _types
+
+
+def _ssr_args(**over):
+    base = dict(mode="listings", route="ssr", url=None, category=None,
+                city=None, remote=False, keyword=None, experience=None,
+                language=None, employment=None, working_time=None,
+                with_salary=False, city_radius=30, per_page=pp.DEFAULT_ITEMS_COUNT,
+                sort=pp.DEFAULT_SORT, order=pp.DEFAULT_ORDER, retries=3)
+    base.update(over)
+    return _types.SimpleNamespace(**base)
+
+
+def check_the_ssr_address_carries_exactly_what_the_page_applies():
+    cases = [
+        ({}, "https://justjoin.it/job-offers/all-locations"),
+        ({"city": "warszawa"}, "https://justjoin.it/job-offers/warszawa"),
+        ({"category": "python"},
+         "https://justjoin.it/job-offers/all-locations/python"),
+        ({"city": "krakow", "category": "python"},
+         "https://justjoin.it/job-offers/krakow/python"),
+        ({"remote": True}, "https://justjoin.it/job-offers/remote"),
+        ({"remote": True, "category": "python"},
+         "https://justjoin.it/job-offers/remote/python"),
+        ({"keyword": "rust"},
+         "https://justjoin.it/job-offers/all-locations?keyword=rust"),
+        ({"city": "warszawa", "category": "python", "keyword": "django"},
+         "https://justjoin.it/job-offers/warszawa/python?keyword=django"),
+    ]
+    for over, want in cases:
+        equal("ssr address for %s" % (over or "no filters"),
+              pp.target_url(_ssr_args(**over)), want)
+
+    # A user URL is REBUILT, not fetched as given. As given, the flags beside
+    # it were accepted and dropped.
+    got = pp.target_url(_ssr_args(
+        url="https://justjoin.it/job-offers/warszawa", keyword="rust"))
+    equal("--url plus --keyword reaches the address",
+          got, "https://justjoin.it/job-offers/warszawa?keyword=rust")
+    got = pp.target_url(_ssr_args(
+        url="https://justjoin.it/job-offers/warszawa/python"))
+    equal("--url alone round-trips", got,
+          "https://justjoin.it/job-offers/warszawa/python")
+    equal("the supported set is the four the page applies",
+          pp.SSR_FILTERS, ("category", "city", "remote", "keyword"))
+
+
+def check_filters_the_rendered_page_ignores_are_refused_before_any_request():
+    problem = pp.args_problem
+    ok = _ssr_args(category="python", city="warszawa", keyword="rust")
+    equal("the four supported filters pass", problem(ok), None)
+    for flag, over in (("--experience", {"experience": ["senior"]}),
+                       ("--with-salary", {"with_salary": True}),
+                       ("--language", {"language": ["en"]}),
+                       ("--employment", {"employment": ["b2b"]}),
+                       ("--working-time", {"working_time": ["full_time"]}),
+                       ("--sort", {"sort": "salary"}),
+                       ("--order", {"order": "ascending"}),
+                       ("--per-page", {"per_page": 20}),
+                       ("--city-radius", {"city": "warszawa",
+                                          "city_radius": 50})):
+        msg = problem(_ssr_args(**over))
+        check("--route ssr refuses %s" % flag, msg and flag in msg, msg)
+    msg = problem(_ssr_args(city="warszawa", remote=True))
+    check("a city AND remote cannot share a path",
+          msg and "--city and --remote" in msg, msg)
+    # And it names every offender at once rather than one per attempt.
+    msg = problem(_ssr_args(experience=["senior"], with_salary=True,
+                            sort="salary"))
+    check("it lists them all in one message",
+          msg and all(f in msg for f in ("--experience", "--with-salary",
+                                         "--sort")), msg)
+    # The same flags are fine on the route that applies them.
+    for over in ({"experience": ["senior"], "with_salary": True,
+                  "sort": "salary", "per_page": 20, "language": ["en"]},):
+        equal("--route api accepts what ssr refuses",
+              problem(_ssr_args(route="api", **over)), None)
+    # Offer and facets read no query at all.
+    msg = problem(_ssr_args(mode="offer", route="api", category="python"))
+    check("--mode offer refuses a filter", msg and "--category" in msg, msg)
+
+
+def check_retries_below_one_is_refused_because_it_means_no_navigation():
+    """`--retries` is the number of ATTEMPTS. 0 made `range(1, 0 + 1)` empty,
+    so the page was never fetched, and the run said 'came back as unknown' and
+    exited 4 — 'nothing found' on a healthy site, for a fetch that never
+    happened (blocked, empty and failed are different answers)."""
+    for value in (0, -1):
+        msg = pp.args_problem(_ssr_args(route="api", retries=value))
+        check("--retries %d is refused" % value, msg and "--retries" in msg,
+              msg)
+    equal("--retries 1 is the single-attempt spelling",
+          pp.args_problem(_ssr_args(route="api", retries=1)), None)
+
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        saved = sys.argv[:]
+        err = io.StringIO()
+        code = None
+        try:
+            sys.argv = [module + ".py", "--retries", "0"]
+            with contextlib_redirect_stderr(err):
+                try:
+                    engine.parse_args()
+                except SystemExit as exc:
+                    code = exc.code
+        finally:
+            sys.argv = saved
+        ran += 1
+        equal("%s exits 2 on --retries 0" % module, code, 2)
+        check("%s says why" % module, "--retries" in err.getvalue(),
+              err.getvalue()[-160:])
+    if ran == 0:
+        skip("--retries", "no engine library installed here")
+
+
+def contextlib_redirect_stderr(stream):
+    import contextlib
+    return contextlib.redirect_stderr(stream)
+
+
+def check_the_engines_refuse_unsupported_ssr_flags_through_the_shared_check():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        saved = sys.argv[:]
+        err = io.StringIO()
+        code = None
+        try:
+            sys.argv = [module + ".py", "--route", "ssr", "--experience",
+                        "senior", "--with-salary"]
+            with contextlib_redirect_stderr(err):
+                try:
+                    engine.parse_args()
+                except SystemExit as exc:
+                    code = exc.code
+        finally:
+            sys.argv = saved
+        ran += 1
+        equal("%s exits 2" % module, code, 2)
+        check("%s names the flags the page ignores" % module,
+              "--experience" in err.getvalue()
+              and "--with-salary" in err.getvalue(), err.getvalue()[-200:])
+    if ran == 0:
+        skip("ssr flags", "no engine library installed here")
+
+
+def check_the_ssr_sidecar_records_what_arrived_not_what_was_asked():
+    """`sort`, `order` and `items_per_page` describe a REQUEST the endpoint
+    honours. The rendered page honours none of them, so an ssr sidecar that
+    carried them would say a run was sorted by salary when the page had served
+    its own order. And `diff_runs.py` reads `sort` and `filters` to decide
+    whether two runs are comparable, so a wrong value there is not cosmetic."""
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        _, _, meta = _drive_scrape(
+            engine, ["--route", "ssr", "--city", "warszawa", "--keyword",
+                     "rust", "--pages", "1"],
+            lambda url: ("content", ["a", "b", "c"]))
+        ran += 1
+        check("%s: a sidecar was written" % module, meta is not None)
+        if meta is None:
+            continue
+        equal("%s: no sort is claimed for a page that has none" % module,
+              (meta.get("sort"), meta.get("order")), (None, None))
+        equal("%s: the page size is what ARRIVED" % module,
+              meta.get("items_per_page"), 3)
+        applied = meta.get("filters") or {}
+        equal("%s: the keyword the page applied is recorded" % module,
+              applied.get("keywords"), "rust")
+        check("%s: no radius is claimed — the page's path takes none" % module,
+              "cityRadius" not in applied, str(applied))
+        equal("%s: the route is recorded" % module, meta.get("route"), "ssr")
+        equal("%s: and so is the absence of any cap arithmetic" % module,
+              (meta.get("site_total"), meta.get("capped_by_site")),
+              (None, None))
+        _, _, api_meta = _drive_scrape(
+            engine, ["--route", "api", "--pages", "1", "--per-page", "7"],
+            lambda url: ("content", ["a"]))
+        equal("%s: the api route still records the sort it sent" % module,
+              (api_meta.get("sort"), api_meta.get("items_per_page")),
+              (pp.DEFAULT_SORT, 7))
+    if ran == 0:
+        skip("ssr sidecar", "no engine library installed here")
+
+
+def check_the_ssr_route_never_requests_a_path_robots_txt_disallows():
+    """`--route ssr` is documented as the robots-clean route, and the scraper
+    itself was fetching /api/candidate-api/offers/count on it to compute the
+    cap share — a path robots.txt disallows. Asserted on every request the
+    engine makes outside the listing itself, with the api route as the
+    control (it SHOULD ask for the count, or this check proves nothing)."""
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        for route, expect_api in (("ssr", False), ("api", True)):
+            side = []
+            _drive_scrape(engine, ["--route", route, "--pages", "1"],
+                          lambda url: ("content", ["x"]), side=side)
+            ran += 1
+            hit = [u for u in side if pp.API_PATH in u]
+            if expect_api:
+                check("%s: the api route DOES ask for the board count"
+                      % module, hit, "side requests: %r" % side)
+            else:
+                equal("%s: the ssr route makes no /api/ request" % module,
+                      hit, [])
+    if ran == 0:
+        skip("ssr robots", "no engine library installed here")
 
 
 def check_the_404_is_not_a_block():
@@ -2259,11 +2498,15 @@ def check_banned_and_removed_flags():
         check("%s refuses a --url whose route disagrees with --mode" % module,
               "but --mode is" in source,
               "the refusal that makes --mode safe here is missing")
-        check("%s refuses a filter outside --mode listings" % module,
-              "does \n                    \"not read. Use --mode listings to filter" in source
-              or "not read. Use --mode listings to filter" in source,
-              "the refusal that keeps a filter from looking applied when it "
-              "is not is missing")
+        # The refusal itself now lives in ONE place — product_parser.args_problem
+        # — so the question per engine is whether it is CALLED, and from
+        # parse_args rather than from somewhere a run does not reach.
+        check("%s asks product_parser.args_problem" % module,
+              "args_problem(args)" in source,
+              "the shared refusal exists and this engine does not call it")
+        check("%s turns its answer into a usage error (exit 2)" % module,
+              "p.error(problem)" in source,
+              "the refusal would be computed and then ignored")
 
 
 def check_undefined_names_in_every_module():

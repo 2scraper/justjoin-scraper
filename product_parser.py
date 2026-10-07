@@ -2067,6 +2067,123 @@ def filters_from_args(args) -> Filters:
 
 
 
+# What the RENDERED listing page applies, measured 2026-10-07 by fetching it and
+# counting how many of its 50 rows satisfy each candidate, against a control
+# fetched in the same minute (a filter that is accepted and
+# ignored looks exactly like one that works):
+#
+#   APPLIED     the path: /job-offers/{city}/{category}, /job-offers/remote and
+#               /job-offers/remote/{category}     (warszawa: 50 of 50 in
+#               Warsaw; remote: 50 of 50 remote; remote/python: 49 of 50 python)
+#               ?keyword=            47 of 50 mention rust, against 0 of 50
+#   NOT APPLIED with-salary / withSalary / salary      33 of 50 priced, control 30
+#               workplace-type / remoteWorkOptions     19 remote, control 21
+#               working-time / workingTimes            13 b2b_contract, control 12
+#               sort / sortBy / orderBy=ascending      first row not the oldest
+#               employmentTypes / experienceLevels     the API's names; 9 and 30
+#                                                      of 50, control 9 and 24
+#   PARTLY      experience-level=   junior 50 of 50 (control 5) and senior 50 of
+#               50, but `manager` 2 of 50 (control 1): the page's value
+#               vocabulary is not the API's, and a flag that works for two
+#               values of six is the defect again with a smaller surface.
+#               employment-type=permanent 46 of 50 (control 9), unmeasured for
+#               the other five.
+#
+# So the route takes exactly these four, and refuses the rest before any
+# request is made. `--route api` takes all of them.
+SSR_FILTERS = ("category", "city", "remote", "keyword")
+
+
+def ssr_url_for(filters: Filters) -> str:
+    """The rendered-listing address for a set of filters.
+
+    Path for the location and category, `?keyword=` for a search — the four
+    things this page measurably applies. A city and `remote` are alternatives
+    in the path (there is no `/warszawa/remote`), so `args_problem` refuses
+    the pair rather than this function quietly dropping one.
+    """
+    where = filters.city or ("remote" if filters.remote else None)
+    if not (where or filters.category):
+        url = DEFAULT_LISTING_URL
+    else:
+        url = listing_url(city=where, category=filters.category)
+    if filters.keyword:
+        url += "?" + urllib.parse.urlencode({"keyword": filters.keyword})
+    return url
+
+
+def args_problem(args) -> Optional[str]:
+    """The reason these arguments cannot be honoured, or None.
+
+    ONE implementation, called from every engine's `parse_args`, replacing the
+    copy each of them carried. Everything here is a request this scraper
+    could otherwise accept and quietly not carry out — the failure already
+    found in the BBB scraper and again in the Binance one.
+    """
+    retries = getattr(args, "retries", 1)
+    if retries is not None and retries < 1:
+        return ("--retries is the number of ATTEMPTS per page, so 0 means "
+                "never navigating at all. It used to be accepted and ended "
+                "in 'came back as unknown' and exit 4 on a perfectly healthy "
+                "site — a 'nothing found' for a fetch that never happened. "
+                "Use 1 for a single attempt.")
+
+    used = [name for name, value in (
+        ("--category", getattr(args, "category", None)),
+        ("--city", getattr(args, "city", None)),
+        ("--keyword", getattr(args, "keyword", None)),
+        ("--remote", getattr(args, "remote", False)),
+        ("--experience", getattr(args, "experience", None)),
+        ("--language", getattr(args, "language", None)),
+        ("--employment", getattr(args, "employment", None)),
+        ("--working-time", getattr(args, "working_time", None)),
+        ("--with-salary", getattr(args, "with_salary", False))) if value]
+
+    if args.mode != "listings":
+        # Refused rather than ignored, so a filtered `--mode offer` run
+        # cannot look like it narrowed the enumeration when it did not.
+        if used:
+            return ("%s filter%s the offers endpoint, which --mode %s does "
+                    "not read. Use --mode listings to filter, then --mode "
+                    "offer --slugs-file on its output to fetch those offers "
+                    "in full."
+                    % (", ".join(used), "" if len(used) == 1 else "s",
+                       args.mode))
+        return None
+
+    if getattr(args, "route", DEFAULT_ROUTE) != "ssr":
+        return None
+
+    unsupported = [name for name in used
+                   if name not in ("--category", "--city", "--keyword",
+                                   "--remote")]
+    if getattr(args, "city_radius", 30) not in (None, 30):
+        unsupported.append("--city-radius")
+    if getattr(args, "sort", DEFAULT_SORT) != DEFAULT_SORT:
+        unsupported.append("--sort")
+    if getattr(args, "order", DEFAULT_ORDER) != DEFAULT_ORDER:
+        unsupported.append("--order")
+    if getattr(args, "per_page", DEFAULT_ITEMS_COUNT) != DEFAULT_ITEMS_COUNT:
+        unsupported.append("--per-page")
+    if unsupported:
+        plural = len(unsupported) > 1
+        return ("--route ssr reads the rendered listing page, which applies "
+                "only --category, --city, --remote and --keyword (measured "
+                "2026-10-07; see product_parser.SSR_FILTERS). It ignored %s "
+                "when tried, and a run that accepted %s would write %s into "
+                "its sidecar as if %s had narrowed the rows. Drop %s, or use "
+                "--route api, which takes every one of them."
+                % (", ".join(unsupported), "them" if plural else "it",
+                   "them" if plural else "it", "they" if plural else "it",
+                   "them" if plural else "it"))
+    if getattr(args, "city", None) and getattr(args, "remote", False):
+        return ("--city and --remote cannot be combined with --route ssr: the "
+                "page takes ONE location in its path (/job-offers/warszawa "
+                "or /job-offers/remote — there is no /warszawa/remote). Use "
+                "--route api to filter on both.")
+    return None
+
+
 def target_url(args) -> str:
     """The address this run actually fetches.
 
@@ -2096,14 +2213,12 @@ def target_url(args) -> str:
         return api_url(items=1)
 
     if args.route == "ssr":
-        if args.url and route_of(args.url) == "listing":
-            return args.url
-        filters = filters_from_args(args)
-        if filters.category or filters.city or filters.remote:
-            return listing_url(city=filters.city or (
-                "remote" if filters.remote else None),
-                category=filters.category)
-        return DEFAULT_LISTING_URL
+        # ALWAYS rebuilt from the merged filters, never returned as given.
+        # A user URL was fetched verbatim here while the flags beside it were
+        # accepted and ignored, so `--url .../warszawa --keyword rust` read
+        # an unfiltered Warsaw page and wrote `keywords: rust` into the
+        # sidecar. See `ssr_url_for` for what the page really applies.
+        return ssr_url_for(filters_from_args(args))
 
     if args.url and route_of(args.url) == "api_offers":
         return args.url
