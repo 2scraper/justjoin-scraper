@@ -1202,8 +1202,7 @@ def scrape(args) -> int:
         # order: the same query under `publishedAt` and under `salary`
         # overlapped on 5 of 100 ids (measured 2026-09-18), because each is
         # a different slice of a capped result set. So it is recorded, and
-        # `diff_runs.py` refuses to compare two runs that disagree on it
-        #.
+        # `diff_runs.py` refuses to compare two runs that disagree on it.
         filters = filters_from_args(args).as_params()
         if filters:
             extra["filters"] = filters

@@ -386,8 +386,7 @@ def _fetch_body(session, args, url: str) -> str:
 # Chromium reports a DEAD PROXY as a generic error rather than as a
 # timeout, and the two want opposite responses: a timeout deserves another
 # try at the same exit, a dead proxy deserves a different one. Catching
-# only the timeout type let this escape as a traceback in a sibling repo
-#.
+# only the timeout type let this escape as a traceback in a sibling repo.
 _PROXY_ERROR_MARKERS = (
     "ERR_PROXY_CONNECTION_FAILED",     # nothing listening / refused
     "ERR_TUNNEL_CONNECTION_FAILED",    # CONNECT rejected by the proxy
@@ -459,8 +458,7 @@ def _launch_local(pw, args, pool):
     # navigation: Cloudflare calls `turnstile.render(container, params)` once
     # and keeps nothing, so `sitekey`, `action`, `cData` and `chlPageData`
     # exist only inside that call. A static read of a challenge page — any
-    # static read, however careful — cannot produce a solvable task
-    #. It costs nothing on a page that never renders one.
+    # static read, however careful — cannot produce a solvable task. It costs nothing on a page that never renders one.
     context.add_init_script(TURNSTILE_INTERCEPT_JS)
     return browser, context, context.new_page()
 
@@ -1689,8 +1687,7 @@ def scrape(args) -> int:
                         # is looping back on itself. Either way there is
                         # nothing further to fetch, and this is the honest
                         # terminating condition: a property of the DATA, not
-                        # of a CSS selector that may have been renamed
-                        #.
+                        # of a CSS selector that may have been renamed.
                         if not fresh_count:
                             logger.info("Page %d added no rows not already seen "
                                         "— treating that as the end of the "
@@ -1812,8 +1809,7 @@ def scrape(args) -> int:
         # order: the same query under `publishedAt` and under `salary`
         # overlapped on 5 of 100 ids (measured 2026-09-18), because each is
         # a different slice of a capped result set. So it is recorded, and
-        # `diff_runs.py` refuses to compare two runs that disagree on it
-        #.
+        # `diff_runs.py` refuses to compare two runs that disagree on it.
         filters = filters_from_args(args).as_params()
         if filters:
             extra["filters"] = filters

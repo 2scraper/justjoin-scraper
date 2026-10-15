@@ -221,8 +221,7 @@ class JobPosting:
     #
     # Null on 461 of 1,000 rows, where the employer disclosed no salary.
     # Null, not zero — the site's own UI says "Undisclosed Salary" for
-    # these, and a zero would drag every average a reader computes
-    #.
+    # these, and a zero would drag every average a reader computes.
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
     # An ISO 4217 code the site states — never defaulted, never inferred
