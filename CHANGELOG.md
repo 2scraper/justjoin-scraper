@@ -11,7 +11,7 @@ burying it.
 
 ## [Unreleased]
 
-## [0.1.4]
+## [0.1.4] — 2026-10-15
 
 > **Behaviour changes for existing users.** `--route ssr` now refuses, with
 > exit 2, any filter other than category, city, remote and keyword (it used
@@ -109,6 +109,8 @@ another site as if it were this one:
 
 - `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
   that does not exist in this repo (it came with the copied core). Removed.
+
+[0.1.4]: https://github.com/2scraper/justjoin-scraper/releases/tag/v0.1.4
 
 ## [0.1.3] — 2026-09-18
 
