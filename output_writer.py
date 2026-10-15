@@ -44,7 +44,7 @@ ceiling every offers query is. They describe all 19,381 offers, which makes
 unfiltered run cannot.
 
 `mode` goes in the sidecar and `diff_runs.py` REFUSES a cross-shape
-comparison, which is CLAUDE.md §9's rule for a repo that reads more than
+comparison, which is the rule for a repo that reads more than
 one kind of thing.
 
 The row is `JobPosting` and not `Product`
@@ -53,7 +53,7 @@ Every shop repo in this family names its row `Product` and keeps the
 commerce columns even where they are null, because on a shop a null price
 is a fact worth recording. justjoin.it sells no products: there is no
 price, no discount, no stock and no brand, and those columns null on every
-row of every run of every mode is exactly what §9 says must not exist.
+row of every run of every mode is exactly what must not exist.
 `wellfound-scraper`, `bbb-scraper` and `mercor-scraper` are the precedent.
 
 What a job board has where a shop has a price is a RANGE, which is two
@@ -66,11 +66,11 @@ employment-contract rate gross, so `salary_is_gross` is not decoration.
 What IS kept, byte-identical and in order, is the family prefix — `source`,
 `scraped_at`, `url`, `sku`, `title` — so one column name works across the
 family and a consumer reading several of these repos reads the same first
-five columns in the same order (§9).
+five columns in the same order.
 
 Columns that are absent, and the measurement for each
 ------------------------------------------------------
-§9: a column that is null on every row of every run should not exist, and
+A column that is null on every row of every run should not exist, and
 removing one needs the measurement written down so someone can add it back
 with a better one. Measured over 1,000 listing records and 40 detail
 records on 2026-09-18:
@@ -110,7 +110,7 @@ import csv
 import json
 from dataclasses import dataclass, asdict, field, fields
 from datetime import datetime, timezone
-from typing import Optional, List, Set, Sequence, Any, Type
+from typing import Optional, List, Set, Sequence, Any, Tuple, Type
 
 
 # The site a row came from. One value, because justjoin.it serves
@@ -137,13 +137,12 @@ class JobPosting:
 
     The family prefix — `source`, `scraped_at`, `url`, `sku`, `title` — is
     byte-identical and in this order across every repo in the family, so a
-    consumer reading several of them reads the same first five columns
-    (CLAUDE.md §9). Everything after it is Just Join IT's.
+    consumer reading several of them reads the same first five columns. Everything after it is Just Join IT's.
 
     Every coverage figure quoted below was measured on 2026-09-18 over
     1,000 consecutive listing records and 40 randomly sampled offer
     records. They are a reading taken on one day, not a property of the
-    site: re-measure before quoting them (CLAUDE.md §13).
+    site: re-measure before quoting them.
     """
 
     source: str = SOURCE_DEFAULT
@@ -193,7 +192,7 @@ class JobPosting:
     # of 1,040 — every one of 1,000 listing records and 40 detail records
     # measured 2026-09-18. justjoin.it's 25 categories are a flat list, not
     # a tree. A field that looks available and never is costs more than a
-    # missing one (CLAUDE.md §9), and this note is the measurement someone
+    # missing one, and this note is the measurement someone
     # needs to add it back if the site grows subcategories.
     # intern / junior / mid / senior / manager / c_level. Measured over
     # 1,000: senior 519, mid 380, manager 58, junior 38, c_level 4, intern 1.
@@ -222,8 +221,7 @@ class JobPosting:
     #
     # Null on 461 of 1,000 rows, where the employer disclosed no salary.
     # Null, not zero — the site's own UI says "Undisclosed Salary" for
-    # these, and a zero would drag every average a reader computes
-    # (CLAUDE.md §21).
+    # these, and a zero would drag every average a reader computes.
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
     # An ISO 4217 code the site states — never defaulted, never inferred
@@ -287,7 +285,7 @@ class JobPosting:
     # The 1-5 level the employer set for each skill, positionally aligned
     # with `required_skills`. Null on a `--route ssr` row: the rendered
     # payload publishes skills as bare strings with no levels at all, and
-    # inventing a level would be a guess in a column (CLAUDE.md §8).
+    # inventing a level would be a guess in a column.
     required_skill_levels: Optional[List[int]] = None
     # Sparse and real: 46 of 1,000 listing rows, 3 of 40 detail records.
     nice_to_have_skills: Optional[List[str]] = None
@@ -317,18 +315,18 @@ class JobPosting:
     # through the result rather than banked at the top: 33, 32, 10, 34 and
     # 9 per hundred at offsets 0, 500, 2,000, 5,000 and 9,000. So the
     # site's default ordering is NOT a paid ranking — measured, because
-    # CLAUDE.md §21 found that it was on BBB, and this scraper therefore
+    # A sibling directory found that it was on BBB, and this scraper therefore
     # keeps the site's own default sort rather than overriding it.
     #
     # `isPromoted` is deliberately NOT a column beside it: false on
     # 1,000 of 1,000 rows and at every offset sampled. A field that looks
-    # available and never is costs more than a missing one (CLAUDE.md §9),
+    # available and never is costs more than a missing one,
     # and this note is the measurement someone needs to add it back.
     is_super_offer: Optional[bool] = None
     # Detail route only. True on 40 of 40 sampled — the endpoint serves
     # active offers, and no expired one was reachable to check the other
     # value with. So a False here is UNPROVEN and a True says only what the
-    # site said (CLAUDE.md §20). Carried because this is the one column a
+    # site said. Carried because this is the one column a
     # withdrawn offer could ever announce itself in.
     is_active: Optional[bool] = None
     # external 800 / form 200 of 1,000.
@@ -356,7 +354,7 @@ class JobPosting:
     # ---- provenance -----------------------------------------------------
     # Which route this row was read out of: `api` (the offers endpoint),
     # `ssr` (a rendered listing page's flight payload) or `detail` (one
-    # offer's endpoint). CLAUDE.md §8 — provenance of a value goes in a
+    # offer's endpoint). Provenance of a value goes in a
     # column, and `diff_runs.py` reports a difference that comes with a
     # `data_source` difference as `source_changed` rather than as a real
     # change. That matters more here than in most repos in this family,
@@ -375,7 +373,7 @@ class Facet:
 
     A different KIND of thing from a job posting — it describes the board
     rather than a job — so it gets its own row class rather than being
-    bent into `JobPosting` (CLAUDE.md §9). The family prefix is kept
+    bent into `JobPosting`. The family prefix is kept
     byte-identical and in order, and `sku` is reused as the id column so
     one column name works across the family.
 
@@ -498,12 +496,31 @@ def _csv_value(v: Any) -> Any:
     return v
 
 
+# A spreadsheet opening the CSV runs a cell that starts with one of these as
+# a formula, and every string in a row was written by an employer, not by
+# this project. So a string cell starting with one gets a leading apostrophe
+# in the CSV ONLY: JSON keeps the site's exact bytes, and numbers are never
+# touched (turning -5 into text would break every sum over the column). The
+# check runs AFTER `_csv_value`, because a list joined into one cell is text
+# too and its first element can be formula-shaped. The count goes into the
+# sidecar as `csv_cells_escaped`, so the difference between the two outputs
+# is declared rather than discovered.
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+
+def _csv_cell(v: Any) -> Tuple[Any, bool]:
+    v = _csv_value(v)
+    if isinstance(v, str) and v.startswith(CSV_FORMULA_PREFIXES):
+        return "'" + v, True
+    return v, False
+
+
 def write_json(rows: Sequence[Any], path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump([asdict(r) for r in rows], f, ensure_ascii=False, indent=2)
 
 
-def write_csv(rows: Sequence[Any], path: str, row_cls: Type = JobPosting) -> None:
+def write_csv(rows: Sequence[Any], path: str, row_cls: Type = JobPosting) -> int:
     # An empty result still gets the header row. A zero-byte file makes a
     # consumer fail on read (no columns to parse) instead of reading a valid
     # table with zero rows — and "an empty result is still a well-formed
@@ -515,8 +532,14 @@ def write_csv(rows: Sequence[Any], path: str, row_cls: Type = JobPosting) -> Non
     with open(path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
+        escaped = 0
         for r in rows:
-            writer.writerow({k: _csv_value(v) for k, v in asdict(r).items()})
+            row = {}
+            for k, v in asdict(r).items():
+                row[k], hit = _csv_cell(v)
+                escaped += hit
+            writer.writerow(row)
+    return escaped
 
 
 # Exit code used when a run completes but produced nothing. Distinct from 1
@@ -639,7 +662,7 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     results, the ordering and the filters decide WHICH offers are in the
     file and not merely their order. Two orderings of one query overlapped
     on 5 of their first 100 ids when this was measured, so `diff_runs.py`
-    refuses a pair that disagrees on either (CLAUDE.md §21).
+    refuses a pair that disagrees on either.
 
     `source` is `justjoin.it` on every row of every run. The site is served
     from one host and this column
@@ -650,7 +673,7 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     `extra` carries facts about the run that are not about any single row.
     justjoin.it states `meta.totalItems` on every response, so unlike a site
     that states nothing there IS a figure to record — and recording it alone
-    would be the lie §21 warns about, because the site caps that figure at
+    would be a lie, because the site caps that figure at
     10,000 however many the query matched. So a listings run writes the
     whole arithmetic: `total_results`, `site_total`, `reachable_max`,
     `capped_by_site`, `share_of_query_pct` and `share_of_board_pct`, plus
@@ -685,14 +708,15 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     }
     if extra:
         # Merged rather than nested under a key, so a consumer reads
-        # `shop_rating` at the top level beside `products`. Run fields win a
+        # `total_results` at the top level beside `products`. Run fields win a
         # name collision: a caller cannot accidentally overwrite `status`.
         meta.update({k: v for k, v in extra.items() if k not in meta})
     return meta
 
 
 def save(rows: Sequence[Any], out_prefix: str, fmt: str,
-         allow_empty: bool = False, row_cls: Type = JobPosting) -> int:
+         allow_empty: bool = False, row_cls: Type = JobPosting,
+         stats: Optional[dict] = None) -> int:
     """Write JSON/CSV and return a process exit code.
 
     Returns 0 when rows were written, EXIT_NO_PRODUCTS when there were none.
@@ -708,6 +732,8 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 
     `allow_empty=True` is for the legitimate case: a filter that genuinely
     matches nothing, where an empty file is the answer.
+
+    `stats`, when given, receives `csv_cells_escaped` if a CSV was written.
     """
     if not rows and not allow_empty:
         print(f"[!] 0 jobs — refusing to write {out_prefix}.json/.csv, so an "
@@ -719,7 +745,9 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
         write_json(rows, f"{out_prefix}.json")
         print(f"[+] Saved {len(rows)} jobs -> {out_prefix}.json")
     if fmt in ("csv", "both"):
-        write_csv(rows, f"{out_prefix}.csv", row_cls=row_cls)
+        escaped = write_csv(rows, f"{out_prefix}.csv", row_cls=row_cls)
+        if stats is not None:
+            stats["csv_cells_escaped"] = escaped
         print(f"[+] Saved {len(rows)} jobs -> {out_prefix}.csv")
     return 0 if rows else EXIT_NO_PRODUCTS
 
@@ -754,7 +782,7 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # Note what "complete" does NOT mean here. justjoin.it caps every query at
 # 10,000 results however many it matched — the board held 19,381 when this
 # was measured — so a complete run can still be about half the board.
-# CLAUDE.md §21: complete and exhaustive are different words, and the
+# Complete and exhaustive are different words, and the
 # sidecar records both figures so a consumer is not left inferring one from
 # the other.
 COMPLETE_STOP_REASONS = ("completed", "pagination_exhausted", "no_new_products",
@@ -795,7 +823,12 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
     # names has a hole for every name nobody added to it.
     complete = stop_reason in COMPLETE_STOP_REASONS and not pages_failed
     row_cls = ROW_CLASS_BY_MODE.get(mode, JobPosting)
-    rc = save(rows, out_prefix, fmt, allow_empty=allow_empty, row_cls=row_cls)
+    stats: dict = {}
+    rc = save(rows, out_prefix, fmt, allow_empty=allow_empty, row_cls=row_cls,
+              stats=stats)
+    # Housekeeping goes UNDER the caller's extra: a name collision must never
+    # silently drop a value the site stated.
+    extra = {**stats, **(extra or {})}
     wrote_output = bool(rows) or allow_empty
 
     if wrote_output:

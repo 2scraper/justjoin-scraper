@@ -41,7 +41,7 @@ buys nothing on that route, but it costs nothing either.
 
     # TWOCAPTCHA_KEY and the CDP endpoint are read from .env as
     # $JUSTJOIN_CDP_ENDPOINT, so neither needs to be typed — a secret in
-    # argv is readable by anything that can run `ps` (CLAUDE.md §3).
+    # argv is readable by anything that can run `ps`.
 """
 
 import argparse
@@ -303,7 +303,7 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
     # nothing" — for a body the site never served. Measured 2026-09-18: the
     # Scraper API rendering justjoin.it's 1.8 MB listing page came back with
     # upstream HTTP 500 and ZERO bytes, and this path called it an empty
-    # result. CLAUDE.md §8: blocked, empty and failed are three different
+    # result. Blocked, empty and failed are three different
     # answers, and a consumer that cannot tell them apart reads an upstream
     # failure as a board with no jobs on it.
     if not page_flow.should_parse(state):
@@ -337,7 +337,7 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
     # from the repo it was copied from, where the row class has no
     # `category` field either — so it set an attribute that `asdict()` never
     # reads and that reached neither the JSON nor the CSV. It looked like it
-    # was labelling rows and was doing nothing at all (CLAUDE.md §16: a
+    # was labelling rows and was doing nothing at all (a
     # copied file is the one with no evidence behind it).
     #
     # `--category` labels the RUN, and the sidecar is where a run-level fact

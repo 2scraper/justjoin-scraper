@@ -2,7 +2,7 @@
 smoke_test.py — the offline suite for justjoin-scraper.
 
 One file of plain functions with inline fixtures. No pytest, no conftest, no
-fixtures directory (CLAUDE.md §10); `tests/test_smoke.py` wraps this as a
+fixtures directory; `tests/test_smoke.py` wraps this as a
 single pytest test so `pytest` works as an entry point without a second copy
 of the checks.
 
@@ -30,7 +30,7 @@ guards the SHAPE so a future capture from a route that does is caught.
 
 Three values ARE scrubbed, and the fixtures say so rather than leaving a
 reader to wonder why a captured page does not match the live one
-(CLAUDE.md §10): two `applyUrl` form ids on an external ATS and the
+: two `applyUrl` form ids on an external ATS and the
 `traceId` of the request that produced the 404. None of them granted
 anything — the form ids are public and the trace expired — but all three
 are 32-hex strings, which is the shape this repo's own credential scan
@@ -128,7 +128,7 @@ DETAIL_JSON = "{\"id\": \"26bc9745-1d32-4f27-8164-e26f208bcb47\", \"slug\": \"7n
 # fill: `companyUrl` and `companySize` were non-null on 5 of 40 sampled
 # records. Without it, `check_no_column_is_null_on_every_row_of_every_route`
 # would report them as columns nothing ever populates — which is what
-# CLAUDE.md §9 says to delete, and would be the wrong conclusion drawn from
+# the null-column rule says to delete, and would be the wrong conclusion drawn from
 # a fixture rather than from the site.
 DETAIL_WITH_COMPANY_JSON = "{\"id\": \"8aaed32d-6ded-4a51-bf05-32d0af529d6f\", \"slug\": \"astek-polska-senior-angular-developer-warszawa-mazowieckie--javascript-b28b4fcc\", \"title\": \"Senior Angular Developer\", \"experienceLevel\": \"senior\", \"category\": {\"key\": \"javascript\", \"parentKey\": null}, \"companyName\": \"ASTEK Polska\", \"companyUrl\": \"http://astek.pl/\", \"body\": \"<p class=\\\"editor-paragraph\\\"><strong>Astek</strong></p><p class=\\\"editor-paragraph\\\"><strong>Za\u0142o\u017cona w 1988 roku we Francji Grupa Astek jest \u015bwiatowym partnerem w obszarze doradztwa in\u017cynieryjnego oraz IT. Dzi\u0119ki swojej wiedzy specjalistycznej w wielu sektorach przemys\u0142owych i technologicznych, Astek \", \"locationId\": \"0e4697c2-ed6c-47d2-8f60-68db61d925d2\", \"city\": \"Warszawa (Mazowieckie)\", \"street\": \"Centrum\", \"countryCode\": \"PL\", \"latitude\": 52.32121919999999, \"longitude\": 21.1036813, \"companySize\": \"501+\", \"informationClause\": \"Informujemy, \u017ce administratorem danych jest ASTEK Polska sp. z o.o. z siedzib\u0105 w Warszawie, Al. Jana Paw\u0142a II 22, 00-133 Warszawa (dalej jako \\\"administrator\\\"). Masz prawo do \u017c\u0105dania dost\u0119pu do swoich danych osobowych, ich sprostowania, usuni\u0119cia lub ograniczenia przetwarzania, prawo do wniesienia sprzeciwu wobec przetwarzania, a tak\u017ce prawo do przenoszenia danych oraz wniesienia skargi do organu nadzorczego. Dane osobowe przetwarzane b\u0119d\u0105 w celu realizacji procesu rekrutacji. Podanie danych w zakresie wynikaj\u0105cym z ustawy z dnia 26 czerwca 1974 r. Kodeks pracy jest obowi\u0105zkowe. W pozosta\u0142ym zakresie podanie danych jest dobrowolne. Odmowa podania danych obowi\u0105zkowych mo\u017ce skutkowa\u0107 brakiem mo\u017cliwo\u015bci przeprowadzenia procesu rekrutacji. Administrator przetwarza dane obowi\u0105zkowe na podstawie ci\u0105\u017c\u0105cego na nim obowi\u0105zku prawnego, za\u015b w zakresie danych dodatkowych podstaw\u0105 przetwarzania jest zgoda. Dane osobowe b\u0119d\u0105 przetwarzane do czasu zako\u0144czenia post\u0119powania rekrutacyjnego i przez okres mo\u017cliwo\u015bci dochodzenia ewentualnych roszcze\u0144, a w przypadku wyra\u017cenia zgody na udzia\u0142 w przysz\u0142ych post\u0119powaniach rekrutacyjnych - do czasu wycofania tej zgody. Zgoda na przetwarzanie danych osobowych mo\u017ce zosta\u0107 wycofana w dowolnym momencie.  W razie wycofania zg\u00f3d prosimy o kontakt e-mailowy na adres privacy@astek.net lub pisemnie na adres administratora. Odbiorc\u0105 danych jest serwis Just Join IT oraz inne podmioty, kt\u00f3rym powierzyli\u015bmy przetwarzanie danych w zwi\u0105zku z rekrutacj\u0105.\\n\\nProcedura dokonywania zg\u0142osze\u0144 przez sygnalist\u00f3w w ASTEK Polska sp. z o. o.: https://astek.pl/sygnalisci/\\nSzczeg\u00f3\u0142owe informacje dotycz\u0105ce przetwarzania znajdzie Pan/Pani: http://astek.pl/polityka-prywatnosci\", \"futureConsent\": \"Zgadzam si\u0119 na przetwarzanie moich danych osobowych przez ASTEK Polska sp. z o.o. w celu realizacji przysz\u0142ych proces\u00f3w rekrutacji.\", \"customConsent\": \"Zgadzam si\u0119 na przetwarzanie moich danych osobowych przez ASTEK Polska sp. z o.o. w celu realizacji procesu rekrutacji. Zapozna\u0142am/em si\u0119 z informacj\u0105 o przetwarzaniu danych osobowych dost\u0119pn\u0105 pod linkiemhttp://astek.pl/polityka-prywatnosci\", \"companyLogoUrl\": \"https://public.justjoin.it/companies/logos/original/3de9aa63e2331cebd70d66e2b523fa1560bdd100.png?1670599242\", \"employmentTypes\": [{\"from\": 4558.0, \"fromPerUnit\": 217.032728535463, \"to\": 5697.0, \"toPerUnit\": 271.29091066932875, \"currency\": \"CHF\", \"currencySource\": \"conversion\", \"type\": \"b2b\", \"unit\": \"Day\", \"gross\": false}, {\"from\": 4122.0, \"fromPerUnit\": 196.301676416317, \"to\": 5153.0, \"toPerUnit\": 245.37709552039624, \"currency\": \"GBP\", \"currencySource\": \"conversion\", \"type\": \"b2b\", \"unit\": \"Day\", \"gross\": false}, {\"from\": 5522.0, \"fromPerUnit\": 262.950302392848, \"to\": 6902.0, \"toPerUnit\": 328.68787799106, \"currency\": \"USD\", \"currencySource\": \"conversion\", \"type\": \"b2b\", \"unit\": \"Day\", \"gross\": false}, {\"from\": 4813.0, \"fromPerUnit\": 229.189585625229, \"to\": 6016.0, \"toPerUnit\": 286.48698203153623, \"currency\": \"EUR\", \"currencySource\": \"conversion\", \"type\": \"b2b\", \"unit\": \"Day\", \"gross\": false}, {\"from\": 21000.0, \"fromPerUnit\": 1000.0, \"to\": 26250.0, \"toPerUnit\": 1250.0, \"currency\": \"PLN\", \"currencySource\": \"original\", \"type\": \"b2b\", \"unit\": \"Day\", \"gross\": false}], \"workplaceType\": \"hybrid\", \"requiredSkills\": [{\"name\": \"Angular\", \"level\": 5}, {\"name\": \"TypeScript\", \"level\": 5}, {\"name\": \"JavaScript\", \"level\": 5}, {\"name\": \"RxJS\", \"level\": 4}, {\"name\": \"Node.js\", \"level\": 4}, {\"name\": \"HTML5\", \"level\": 4}, {\"name\": \"CSS\", \"level\": 4}], \"niceToHaveSkills\": [{\"name\": \"Git\", \"level\": 4}, {\"name\": \"REST API\", \"level\": 4}, {\"name\": \"React\", \"level\": 3}], \"workingTime\": \"full_time\", \"applyUrl\": null, \"publishedAt\": \"2026-09-17T22:50:16.50239Z\", \"companyProfileSlug\": null, \"companyProfileCoverPhotoUrl\": null, \"companyProfileShortDescription\": null, \"isOpenToHireUkrainians\": false, \"locations\": [{\"city\": \"Warszawa (Mazowieckie)\", \"street\": \"Centrum\", \"latitude\": 52.32121919999999, \"longitude\": 21.1036813, \"slug\": \"astek-polska-senior-angular-developer-warszawa-mazowieckie--javascript-b28b4fcc\"}], \"videoUrl\": null, \"bannerUrl\": null, \"isActive\": true, \"expiredAt\": \"2026-10-17T21:59:59.999Z\", \"languages\": [], \"coverImage\": \"https://og-image.justjoin.it/ogimage/justjoinit/astek-polska-senior-angular-developer-warszawa-mazowieckie--javascript-b28b4fcc\", \"appliedAt\": null, \"hybridWorkSchedule\": null, \"url\": \"https://justjoin.it/job-offer/astek-polska-senior-angular-developer-warszawa-mazowieckie--javascript-b28b4fcc\"}"
 
@@ -152,7 +152,7 @@ CATEGORIES_JSON = "[{\"key\": \"data\", \"count\": 1991}, {\"key\": \"java\", \"
 # NOT from this site. A hand-built page carrying a Cloudflare managed
 # challenge, so the marker set has something to bite on — justjoin.it has
 # never served this scraper one, and a check with no positive case proves
-# nothing (CLAUDE.md §19: a measurement with no negative case is an
+# nothing (a measurement with no negative case is an
 # anecdote, and the inverse holds too).
 SYNTHETIC_CHALLENGE_HTML = (
     "<html><head><title>Just a moment...</title></head><body>"
@@ -235,7 +235,7 @@ def check_the_salary_is_never_read_from_index_zero():
     — PLN 129.37 where the employer offers EUR 30 — and the check asserts
     both that the parser gets the right one AND that the wrong one is
     genuinely there to be got. A check whose trap is absent from its own
-    fixture passes for the wrong reason (CLAUDE.md §21).
+    fixture passes for the wrong reason.
     """
     records = json.loads(LISTING_JSON)["data"]
     rows = {r.sku: r for r in _listing().rows}
@@ -278,7 +278,7 @@ def check_no_conversion_currency_ever_reaches_a_row():
 
     Asked through `product_parser.converted_currencies`, which exists for
     exactly this and whose docstring says so — a helper that promises the
-    suite reads it and is then read by nothing is the defect CLAUDE.md §17
+    suite reads it and is then read by nothing is the dead-code defect
     names.
     """
     records = {r["guid"]: r for r in json.loads(LISTING_JSON)["data"]}
@@ -296,7 +296,7 @@ def check_no_conversion_currency_ever_reaches_a_row():
     check("no row carries a conversion-only currency", not offenders,
           str(offenders))
     # Without this the check could pass on a fixture that holds no
-    # conversions at all — green for the wrong reason (CLAUDE.md §22).
+    # conversions at all — green for the wrong reason.
     check("the fixture actually contains conversions to avoid",
           saw_conversions >= 5,
           "only %d of 7 records carry a computed currency" % saw_conversions)
@@ -337,7 +337,7 @@ def check_the_monthly_figure_is_not_read_as_the_quoted_rate():
 
 def check_an_undisclosed_salary_is_null_and_never_zero():
     """461 of 1,000 offers disclose nothing. A zero would drag every
-    average a consumer computes (CLAUDE.md §21)."""
+    average a consumer computes."""
     page = _listing()
     undisclosed = [r for r in page.rows if r.salary_min is None]
     check("the fixture holds undisclosed offers", undisclosed)
@@ -413,7 +413,7 @@ def check_the_unit_and_country_are_case_normalised():
 def check_a_form_apply_has_no_url_and_that_is_the_site_saying_so():
     """`applyUrl` is non-null on exactly the offers whose `applyMethod` is
     "external" — 800 of 1,000. The null is the site saying "applied to on
-    our own page", not a missing field (CLAUDE.md §21)."""
+    our own page", not a missing field."""
     for row in _listing().rows:
         if row.apply_method == "form":
             equal("%s form apply has no url" % row.sku[:8], row.apply_url, None)
@@ -449,7 +449,7 @@ def check_multi_city_offers_keep_every_city():
 def check_the_sparse_company_columns_are_real_on_some_records():
     """`companyUrl` and `companySize` are non-null on 5 of 40 sampled
     detail records — sparse, and real. A column that no fixture ever
-    populates reads as one to delete (§9), so one that does is kept."""
+    populates reads as one to delete, so one that does is kept."""
     row = pp.parse_detail_response(DETAIL_WITH_COMPANY_JSON)
     check("the record names a company website", row.company_url)
     check("and a company size", row.company_size)
@@ -568,7 +568,7 @@ def check_the_404_is_not_a_block():
 
 def check_walking_past_the_cap_is_named_for_what_it_is():
     """`from=10000` answers HTTP 500 — the site refusing an impossible
-    request, not failing. Retrying would ask it again (CLAUDE.md §21)."""
+    request, not failing. Retrying would ask it again."""
     past = pp.api_url(offset=pp.MAX_FROM)
     equal("state", pp.detect_page_state("<html>500</html>", 500, past),
           "cap_exceeded")
@@ -598,7 +598,7 @@ def check_the_planner_never_builds_an_address_past_the_cap():
 
 def check_a_rendered_listing_is_never_paginated():
     """`?page=2` answers HTTP 200 with page 1 again — a complete-looking
-    run holding a hundred rows of ten thousand (CLAUDE.md §7, §18)."""
+    run holding a hundred rows of ten thousand."""
     equal("page_url refuses to invent a second page",
           pp.page_url(pp.DEFAULT_LISTING_URL, 2), None)
     equal("and says so for any page", pp.page_url(pp.DEFAULT_LISTING_URL, 7),
@@ -658,7 +658,7 @@ def check_the_ssr_page_states_the_cap_without_a_second_request():
 
 
 def check_the_jsonld_names_offers_and_says_nothing_about_them():
-    """Counted before a line of the parser was written (CLAUDE.md §15): a
+    """Counted before a line of the parser was written: a
     listing page publishes two blocks, and the one that lists offers
     carries only their URLs. That is why the flight payload is primary."""
     blocks = pp.jsonld_blocks(SSR_HTML)
@@ -761,7 +761,7 @@ def check_the_facet_counts_are_not_capped():
 
 def check_facets_and_offers_are_refused_against_each_other():
     """Different row classes and no shared id — every row would be
-    reported as both added and removed (CLAUDE.md §9)."""
+    reported as both added and removed."""
     equal("facets get their own class", ROW_CLASS_BY_MODE["facets"], Facet)
     equal("both job modes share one", ROW_CLASS_BY_MODE["listings"],
           ROW_CLASS_BY_MODE["offer"])
@@ -828,7 +828,7 @@ def check_the_sku_is_not_recoverable_from_a_url_and_says_so():
 
 def check_only_filters_that_measurably_filter_are_offered():
     """Several plausible parameter names are ACCEPTED AND IGNORED by the
-    endpoint — the same defect CLAUDE.md §21 found on BBB, where
+    endpoint — the same defect found on BBB, where
     `showOnlyAccredited` does nothing. Only the measured ones are built."""
     params = pp.Filters(category="python", city="Kraków", remote="remote",
                         keyword="rust", experience=["senior"],
@@ -935,7 +935,7 @@ def check_page_states_on_real_captures():
 
 
 def check_content_wins_over_every_heuristic():
-    """CLAUDE.md §17's classification-order trap: a threshold heuristic
+    """the classification-order trap: a threshold heuristic
     that runs ahead of an unambiguous signal reports exit 3 for a correct
     answer. A payload holding records is `content` whatever else is in it —
     including a job description that happens to say "access denied"."""
@@ -949,7 +949,7 @@ def check_content_wins_over_every_heuristic():
 
 
 def check_no_marker_matches_a_page_the_site_serves():
-    """CLAUDE.md §18: count every candidate on a page you know is good
+    """Count every candidate on a page you know is good
     BEFORE adding it. Two candidates were thrown out this way —
     `cf-turnstile`, which 2Captcha's own extension injects into every page
     it loads, and `akamai`, which appears four times on a served offer page
@@ -979,7 +979,7 @@ def check_no_marker_matches_a_page_the_site_serves():
 
 
 def check_a_marker_survives_both_encodings_of_the_same_page():
-    """CLAUDE.md §20: an edge's refusal reaches a parser entity-escaped
+    """An edge's refusal reaches a parser entity-escaped
     over a raw HTTP client and plain out of a browser DOM."""
     escaped = SYNTHETIC_CHALLENGE_HTML.replace(
         "challenges.cloudflare.com",
@@ -992,7 +992,7 @@ def check_a_marker_survives_both_encodings_of_the_same_page():
 
 
 def check_positive_asset_detection_reads_the_sites_own_hosts():
-    """CLAUDE.md §8's trick, on its third site: a served page is built out
+    """the trick, on its third site: a served page is built out
     of the site's own assets; an interstitial is not."""
     check("a rendered page references them", pp.count_site_assets(SSR_HTML)
           >= pp.MIN_ASSET_MARKERS, pp.count_site_assets(SSR_HTML))
@@ -1000,11 +1000,11 @@ def check_positive_asset_detection_reads_the_sites_own_hosts():
           pp.count_site_assets(SYNTHETIC_CHALLENGE_HTML), 0)
     check("the threshold is 1, not the measured average",
           pp.MIN_ASSET_MARKERS == 1,
-          "a higher threshold calls a minimal-but-real page blocked (§17)")
+          "a higher threshold calls a minimal-but-real page blocked")
 
 
 def check_the_sites_own_captcha_is_recorded_even_though_it_never_renders():
-    """CLAUDE.md §18: grep a GOOD page for the site's own captcha config
+    """Grep a GOOD page for the site's own captcha config
     rather than building a marker set from a vendor list.
 
     justjoin.it publishes a reCAPTCHA **v2** key on every page, and it
@@ -1170,7 +1170,7 @@ def check_row_schema():
 
 
 def check_no_column_is_null_on_every_row_of_every_route():
-    """CLAUDE.md §9: a column that is null on every row of every run should
+    """A column that is null on every row of every run should
     not exist. Checked across all three routes together, because several
     columns are legitimately filled by only one of them."""
     rows = (_listing().rows + _ssr().rows + [_detail()]
@@ -1185,7 +1185,7 @@ def check_no_column_is_null_on_every_row_of_every_route():
 
 
 def check_page_and_position_are_unique_across_pages():
-    """CLAUDE.md §18: `position` restarts at 1 on every page, so without
+    """`position` restarts at 1 on every page, so without
     the page number beside it a row from page 2 claims a position another
     row already has. One line, and the column is worthless without it."""
     first = pp.parse_offers_response(LISTING_JSON, page=1, items=7).rows
@@ -1264,7 +1264,7 @@ def check_the_page_size_ceiling_is_enforced_before_the_request():
 def check_fixtures_carry_no_personal_names():
     """justjoin.it's offer records name COMPANIES and job titles, never
     individuals. This guards the SHAPE so a future capture from a route
-    that does carry a person is caught (CLAUDE.md §10)."""
+    that does carry a person is caught."""
     person_fields = ("firstName", "lastName", "authorName", "recruiterName",
                      "displayName", "userName", "profileUrl", "avatarUrl",
                      "email", "phone")
@@ -1296,7 +1296,7 @@ DRIVER_IMPORTS = {
     "puppeteer_scraper": "pyppeteer",
 }
 
-# The family contract (CLAUDE.md §9), re-derived across the repos rather
+# The family contract, re-derived across the repos rather
 # than copied from that list — which was itself wrong for months.
 CONTRACT_FLAGS = {
     "--url", "--pages", "--category", "--format", "--out", "--delay",
@@ -1304,9 +1304,9 @@ CONTRACT_FLAGS = {
     "--proxy-rotate", "--proxy-shuffle", "--proxy-block-retries",
     "--twocaptcha-key", "--captcha-api", "--solve-captcha", "--min-score",
     "--cdp-endpoint", "--allow-empty", "--dump-html",
-    # The five CLAUDE.md §9 admits its own list omitted for months while
+    # The five the family's flag list omitted for months while
     # nearly every repo shipped them, plus the headless pair every engine
-    # carries. RE-MEASURED here rather than inherited (§13 — a number you
+    # carries. RE-MEASURED here rather than inherited (a number you
     # inherited is not a number you measured): counted 2026-09-18 across
     # the 26 sibling repos in ~/2scraper, `--fingerprint`, `--fp-tags` and
     # `--fp-country` are in 25 of 26 and `--locale` in 23, against 23 flags
@@ -1336,10 +1336,10 @@ SITE_FLAGS = {
     "--slugs-file",
 }
 
-# §12: wording the build fails on. Assembled from pieces rather than written
+# Wording the build fails on. Assembled from pieces rather than written
 # out, so this file can scan ITSELF — three sibling repos exempted
 # `smoke_test.py` wholesale, which made the file most likely to acquire a
-# stray phrase the one file nobody scanned (CLAUDE.md §22).
+# stray phrase the one file nobody scanned.
 BANNED_WORDING = (
     "cloud " + "browser", "anti" + "detect browser",
     "2scraper Anti" + "detect Browser",
@@ -1371,7 +1371,7 @@ def check_state_policy():
           page_flow.should_retry("blocked")
           and page_flow.should_solve("blocked")
           and page_flow.counts_as_blocked("blocked"))
-    # A served page we could not read is OUR bug, never "0 jobs" (§20), so
+    # A served page we could not read is OUR bug, never "0 jobs", so
     # it neither counts as blocked nor buys a solve.
     check("parse_error: retried once, never solved, NOT blocked",
           page_flow.should_retry("parse_error")
@@ -1386,7 +1386,7 @@ def check_state_policy():
     # Asking past the site's 10,000 ceiling is an HTTP 500 — the site
     # refusing an impossible request rather than failing. A retry would ask
     # the identical impossible question again; calling it blocked would
-    # send a reader after a proxy (§21).
+    # send a reader after a proxy.
     check("cap_exceeded: not retried, not blocked, not solved",
           not page_flow.should_retry("cap_exceeded")
           and not page_flow.counts_as_blocked("cap_exceeded")
@@ -1407,7 +1407,7 @@ def check_state_policy():
 
 
 def check_the_two_known_dead_names_in_the_shared_solver_stay_pinned():
-    """§17 says a public name nothing reads is the same defect as dead code,
+    """A public name nothing reads is the same defect as dead code,
     and a sweep of this repo finds exactly two — both in `captcha_solver.py`,
     which is family core copied verbatim.
 
@@ -1419,7 +1419,7 @@ def check_the_two_known_dead_names_in_the_shared_solver_stay_pinned():
 
     What the check buys is that the list cannot GROW silently. A third dead
     name appearing in the shared solver is a real finding; these two are a
-    decision (CLAUDE.md §10: pin a known limitation rather than
+    decision (pin a known limitation rather than
     half-guarding it).
     """
     import ast as _ast
@@ -1459,7 +1459,7 @@ def check_the_two_known_dead_names_in_the_shared_solver_stay_pinned():
 
 
 def check_policy_constants_have_a_consumer():
-    """§17: a policy constant nothing reads is the same defect as dead code.
+    """A policy constant nothing reads is the same defect as dead code.
 
     `RETRY_ON_BLOCKED` carried a paragraph of justification in a sibling repo
     and no engine consulted it, so setting it False changed nothing.
@@ -1597,7 +1597,7 @@ def check_a_run_that_finds_nothing_writes_nothing():
         code = save([], prefix, "json", allow_empty=True)
         equal("--allow-empty WRITES the empty file...", 
               json.load(open(prefix + ".json", encoding="utf-8")), [])
-        # ...and still reports exit 4. Pinned deliberately (§10: pin a known
+        # ...and still reports exit 4. Pinned deliberately (pin a known
         # behaviour rather than half-guarding it): "zero offers" is true
         # whether or not the file was written, and a caller that wanted the
         # file still wants to know the result was empty.
@@ -1622,7 +1622,7 @@ def check_sidecar_shape():
           meta["total_results"], 10000)
     # Both figures, because every query is capped at 10,000 while the board
     # holds more. Without the second number a reader cannot tell that a
-    # "complete" run is about half the board (CLAUDE.md §21: complete and
+    # "complete" run is about half the board (complete and
     # exhaustive are different words).
     equal("...and how many offers the whole board held",
           meta["site_total"], 19388)
@@ -1670,7 +1670,7 @@ def check_engines_import_their_driver_at_module_level():
 
 
 def check_shared_calls_bind_against_the_real_signature():
-    """§17's check #1, and the one that earns its keep.
+    """the check #1, and the one that earns its keep.
 
     A sibling repo shipped `classify(html, url=…)` in two of three engines
     against a callee taking `status` second, and BOTH crashed on their first
@@ -1787,7 +1787,7 @@ def _argparse_flags(module_name):
 
 
 def check_engine_flag_sets():
-    """§17's check #2: against the contract AND against each other, both ways.
+    """the check #2: against the contract AND against each other, both ways.
 
     A missing flag fails; so does closing a difference the README documents.
     """
@@ -1804,7 +1804,7 @@ def check_engine_flag_sets():
     # and could not launch it on the development machine, so it needs a way
     # to point at another one. Its twins have no equivalent because they do
     # not ship a browser. Listed here so that closing the difference — or
-    # growing a second one — fails the build (§17).
+    # growing a second one — fails the build.
     DOCUMENTED_DIFFERENCES = {"puppeteer_scraper": {"--chromium-path"}}
     names = sorted(sets)
     for i in range(len(names) - 1):
@@ -1818,7 +1818,7 @@ def check_engine_flag_sets():
 
 
 def check_the_concurrency_difference_is_documented_in_both_directions():
-    """§20: the exception list IS the documentation.
+    """The exception list IS the documentation.
 
     All three engines take `--concurrency` because it is in the family's CLI
     contract, but only the Playwright engine implements it — the other two
@@ -1877,15 +1877,14 @@ def check_banned_and_removed_flags():
     identically from every exit tried, so such a flag could only contradict
     what the URL already says. On `fingerprint_client.py` the same name is
     legitimate — there it picks a fingerprint locale, not a target — which
-    is why this check is scoped to the engines rather than to the tree
-    (CLAUDE.md §10).
+    is why this check is scoped to the engines rather than to the tree.
 
     What the rule is really about is a flag that can disagree with the URL
     or with the mode. Two refusals enforce that here:
 
       * `--url` and `--mode` are refused when they name different routes,
         because reading an offer URL with the listings reader returns zero
-        rows from a perfectly good response (§20).
+        rows from a perfectly good response.
       * the filter flags are refused outside `--mode listings`, because
         `--mode offer` reads a sitemap and `--mode facets` reads one
         endpoint — neither takes a query. A `--category python --mode
@@ -1911,7 +1910,7 @@ def check_banned_and_removed_flags():
 
 
 def check_undefined_names_in_every_module():
-    """§10: compileall proves a file PARSES, not that its names RESOLVE.
+    """Compileall proves a file PARSES, not that its names RESOLVE.
 
     A live run of a sibling repo's pyppeteer engine died with NameError on a
     line reached only while fetching, after an import had been removed — the
@@ -1969,7 +1968,7 @@ def _import_graph(entrypoint):
 
 
 def check_dockerfile_copies_everything_the_entrypoint_imports():
-    """§10: all three repos in this family shipped an image that died with
+    """All three repos in this family shipped an image that died with
     ModuleNotFoundError on every invocation, --help included, because
     proxy_pool.py was missing from the COPY list. CI never built the image;
     this check needs no Docker."""
@@ -2017,7 +2016,7 @@ def check_env_example_documents_exactly_what_the_loader_reads():
 
 
 def check_a_copied_env_example_reads_as_UNSET():
-    """§17: `cp .env.example .env` followed by a run must not connect.
+    """`cp .env.example .env` followed by a run must not connect.
 
     The placeholder check was a literal set in a sibling repo, and the two
     credentialled URLs are documented the way the vendor documents them —
@@ -2032,13 +2031,21 @@ def check_a_copied_env_example_reads_as_UNSET():
         return
     text = open(example, encoding="utf-8").read()
     values = dict(re.findall(r"^([A-Z][A-Z0-9_]+)=(.*)$", text, re.M))
-    check("the example actually sets every variable",
-          set(values) == set(env_config.ENV_KEYS),
-          "example has %s, loader reads %s"
-          % (sorted(values), sorted(env_config.ENV_KEYS)))
+    commented = dict(re.findall(r"^#\s*([A-Z][A-Z0-9_]+)=(\S.*)$", text, re.M))
+    check("the example sets or shows every variable",
+          set(values) | set(commented) == set(env_config.ENV_KEYS),
+          "example has %s + commented %s, loader reads %s"
+          % (sorted(values), sorted(commented), sorted(env_config.ENV_KEYS)))
+    # The URL is offered COMMENTED OUT. Active, it stood in for --url on
+    # every run, and a listings URL made `--mode offer` and `--mode facets`
+    # a usage error for anyone who copied the file.
+    check("the example ships JUSTJOIN_URL commented out",
+          "JUSTJOIN_URL" in commented and "JUSTJOIN_URL" not in values,
+          "active: %s" % sorted(values))
+    values = {**commented, **values}
     # Every CREDENTIAL must read as unset. The default TARGET must not: it is
     # a real, usable URL, and blanking it would remove the one setting this
-    # file exists to make convenient (§17's check #3 says exactly this — the
+    # file exists to make convenient (the check #3 says exactly this — the
     # credentials unset, the non-credential default still usable).
     CREDENTIALS = {"TWOCAPTCHA_KEY", "JUSTJOIN_CDP_ENDPOINT", "JUSTJOIN_PROXY"}
     before = dict(os.environ)
@@ -2072,7 +2079,7 @@ def check_a_copied_env_example_reads_as_UNSET():
 def check_ci_greps_for_a_sentinel_this_suite_can_actually_emit():
     """The `engine-smoke` job must be ABLE to fail.
 
-    That job exists for one reason (CLAUDE.md §10): "skipped, engine absent"
+    That job exists for one reason: "skipped, engine absent"
     reads identically to a real import error, so CI installs each engine and
     fails if THAT engine's group still reports a skip. It works by grepping
     the suite's own output for a sentinel.
@@ -2081,7 +2088,7 @@ def check_ci_greps_for_a_sentinel_this_suite_can_actually_emit():
     imported"` — a string no suite in this family emits. Checked 2026-09-18,
     seven sibling repos carry the same dead grep, so in none of them could
     the job ever have failed. It passed for the wrong reason, which is
-    §22's "a check that swallows the loudest failure it could report".
+    the "a check that swallows the loudest failure it could report".
 
     This check is the guard against that coming back: whatever sentinel the
     workflow looks for, this suite has to be capable of printing it. It
@@ -2091,7 +2098,7 @@ def check_ci_greps_for_a_sentinel_this_suite_can_actually_emit():
     """
     workflow = os.path.join(HERE, ".github", "workflows", "tests.yml")
     if not os.path.isdir(os.path.join(HERE, ".github")):
-        # §22: trigger on the WHOLE .github directory being absent — which
+        # Trigger on the WHOLE .github directory being absent — which
         # is the Docker image, where it is deliberately not COPYed — and
         # never on a file inside it going missing, because a check that
         # quietly starts passing once its input disappears is the failure
@@ -2134,7 +2141,7 @@ def check_ci_greps_for_a_sentinel_this_suite_can_actually_emit():
 
 
 def check_credential_scan_is_one_implementation_invoked_from_both():
-    """§17: two sources of truth, one dead and one holed.
+    """Two sources of truth, one dead and one holed.
 
     `.github/ci_checks.py` sat in three repos invoked by NOTHING, while
     tests.yml carried an inline grep doing a narrower version of the same job
@@ -2151,7 +2158,7 @@ def check_credential_scan_is_one_implementation_invoked_from_both():
     # file being missing: two suites in this family run INSIDE the Docker
     # image, which deliberately COPYs no .github/, and a check that quietly
     # starts passing once its input disappears is the same failure this
-    # function is about (CLAUDE.md §22).
+    # function is about.
     if not os.path.isdir(workflow_dir):
         skip("ci-wiring", "no .github/ in this tree (the Docker image)")
     elif os.path.exists(workflow):
@@ -2180,7 +2187,7 @@ def check_credential_scan_is_one_implementation_invoked_from_both():
                   "tests.yml's offline job mentions %r — one implementation, "
                   "in ci_checks.py, invoked from both" % marker)
         # And the guard must have had something to read, or it passed for the
-        # wrong reason (CLAUDE.md §22).
+        # wrong reason.
         check("...and the offline job was actually found to scan",
               "ci_checks.py" in offline, "no offline job in tests.yml")
     result = subprocess.run([sys.executable, script, "--all"], cwd=HERE,
@@ -2202,7 +2209,7 @@ def check_the_credential_scan_survives_a_venv_in_the_tree():
     The fix is structural rather than a longer list of names — a directory
     holding `pyvenv.cfg` is a virtualenv whatever it is called — and this
     pins BOTH halves, because narrowing a credential scan is exactly how one
-    stops catching things. CLAUDE.md §22 records a sibling repo whose scan
+    stops catching things. A sibling repo recorded whose scan
     caught an UNTRACKED `.env.bak` holding a live key, so scanning must not
     be reduced to tracked files.
     """
@@ -2240,8 +2247,41 @@ def check_the_credential_scan_survives_a_venv_in_the_tree():
           "git ls-files" not in open(script, encoding="utf-8").read())
 
 
+def check_the_credential_scan_works_from_any_parent_directory():
+    """A clone under ~/build, /srv/env or …/venv must still be scanned.
+
+    The skip list was matched against the ABSOLUTE path, so every file of a
+    clone whose ancestor was called `build`, `env` or `venv` was skipped:
+    "0 files scanned, nothing credential-shaped", exit 0, with a key in the
+    tree. Run here exactly the way CI runs it, from such a copy, with a
+    key-shaped string planted (assembled, so this file does not carry one).
+    """
+    script = os.path.join(HERE, ".github", "ci_checks.py")
+    if not os.path.isdir(os.path.join(HERE, ".github")):
+        skip("credential-scan-parent", "no .github/ in this tree (the Docker image)")
+        return
+    planted = "ab" * 16
+    for parent in ("build", "venv", "env"):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, parent, "clone")
+            os.makedirs(os.path.join(repo, ".github"))
+            with open(script, encoding="utf-8") as src, open(
+                    os.path.join(repo, ".github", "ci_checks.py"), "w",
+                    encoding="utf-8") as dst:
+                dst.write(src.read())
+            with open(os.path.join(repo, "planted.py"), "w",
+                      encoding="utf-8") as f:
+                f.write("KEY = '%s'\n" % planted)
+            run = subprocess.run(
+                [sys.executable, os.path.join(repo, ".github", "ci_checks.py"),
+                 "--secret-check"], capture_output=True, text=True, cwd=repo)
+            check("the scan finds a planted key in a clone under %s/" % parent,
+                  run.returncode != 0 and "planted.py" in run.stdout + run.stderr,
+                  "exit %s: %s" % (run.returncode, (run.stdout + run.stderr)[-200:]))
+
+
 def check_banned_wording():
-    """§12: enforced by this test rather than by review."""
+    """Enforced by this test rather than by review."""
     for root, dirs, files in os.walk(HERE):
         dirs[:] = [d for d in dirs if d not in
                    (".git", "__pycache__", ".pytest_cache", "node_modules")]
@@ -2258,8 +2298,44 @@ def check_banned_wording():
     check("banned-wording scan ran", True)
 
 
+def check_no_private_document_is_cited():
+    """Shipped files explain their rules in their own words.
+
+    The project's internal notes are not public, so a comment that says
+    "see <that file> section N" is a pointer nobody outside can follow. The
+    tokens are assembled from pieces so this file can scan itself.
+    """
+    section = chr(167)
+    tokens = ("CLAUDE" + ".md", "claude_" + "2scraper",
+              "2scraper_" + "repo_rules", "play" + "book " + section,
+              "template " + section)
+    numbered = re.compile(section + r"\s?\d")
+    scanned = 0
+    for root, dirs, files in os.walk(HERE):
+        dirs[:] = [d for d in dirs if d not in
+                   (".git", "__pycache__", ".pytest_cache", "node_modules")
+                   and not os.path.exists(os.path.join(root, d, "pyvenv.cfg"))]
+        for filename in files:
+            if not filename.endswith((".py", ".md", ".yml", ".yaml", ".txt",
+                                      ".toml", ".html", ".example", ".cfg",
+                                      ".gitignore", ".dockerignore")) \
+                    and filename != "Dockerfile":
+                continue
+            path = os.path.join(root, filename)
+            text = open(path, encoding="utf-8", errors="replace").read()
+            scanned += 1
+            rel = os.path.relpath(path, HERE)
+            for token in tokens:
+                check("%s cites no private %r" % (rel, token), token not in text)
+            hit = numbered.search(text)
+            check("%s carries no bare section reference" % rel, not hit,
+                  hit.group(0) if hit else "")
+    check("the citation scan read the repo's files", scanned > 20,
+          "%d file(s)" % scanned)
+
+
 def check_concurrency_with_the_browser_stubbed():
-    """§10: a live run cannot always reach this machinery.
+    """A live run cannot always reach this machinery.
 
     Page 1 is fetched alone and decides how many pages there are, so a
     blocked page 1 means the workers never start. Driven directly instead,
@@ -2405,7 +2481,7 @@ def check_worker_pools_start_on_different_exits():
 
 
 def check_fingerprint_kwargs_are_ones_the_driver_accepts():
-    """§10: an unknown key in new_context(**kwargs) is a TypeError at launch,
+    """An unknown key in new_context(**kwargs) is a TypeError at launch,
     on the PAID path, at runtime."""
     engine = _import_engine("playwright_scraper")
     if engine is None:
@@ -2437,7 +2513,7 @@ def check_every_engine_exposes_the_same_public_surface():
         # `target_url` and `parse_for_mode` are deliberately NOT here:
         # they moved into product_parser so the three engines cannot
         # disagree about which URL a run fetches or how a body is read
-        # (CLAUDE.md §1, the argument page_flow already makes for policy).
+        # (the argument page_flow already makes for policy).
         for name in ("scrape", "parse_args", "PageOutcome", "_fetch_one_page",
                      "_is_endpoint", "_snapshot"):
             check("%s.%s exists" % (module, name), hasattr(engine, name))
@@ -2470,7 +2546,7 @@ def check_every_engine_exposes_the_same_public_surface():
 
 def check_every_solve_is_counted_against_the_budget():
     """`SOLVES_PER_PAGE` is a MONEY limit, so every call that can buy must be
-    counted — CLAUDE.md §17's "a policy constant nothing reads".
+    counted — the "a policy constant nothing reads".
 
     `handle_captcha_if_present` is called TWICE per attempt in every engine:
     once before the page is classified (so a challenge is cleared before
@@ -2513,7 +2589,7 @@ def check_every_solve_is_counted_against_the_budget():
 
 
 def check_a_dead_proxy_is_reported_as_a_proxy_failure():
-    """CLAUDE.md §8: a proxy failure is not a timeout, and the two want
+    """A proxy failure is not a timeout, and the two want
     opposite responses — another try at the same exit versus a different one.
 
     The engines all compute the reason (`_proxy_failure`) and, WITH a pool,
@@ -2536,7 +2612,7 @@ def check_a_dead_proxy_is_reported_as_a_proxy_failure():
         # Anchored on the GIVE-UP branch — the one that reports and returns —
         # not on the `if load_failed: break` inside the retry loop, which
         # comes first in the file and would make this check read the wrong
-        # block and pass for the wrong reason (CLAUDE.md §22).
+        # block and pass for the wrong reason.
         marker = "        outcome.load_failed = True"
         if marker not in source:
             check("%s has a give-up branch to check" % module, False)
@@ -2569,7 +2645,7 @@ def check_a_dead_proxy_is_reported_as_a_proxy_failure():
 
 
 def check_engines_do_not_evaluate_a_string_in_the_browser():
-    """§18: a site whose CSP omits `unsafe-eval` kills wait_for_function with
+    """A site whose CSP omits `unsafe-eval` kills wait_for_function with
     an EvalError and takes the run down with exit 1, on the site's most
     obvious URL. justjoin.it has not been measured for that, and the cheap habit
     costs nothing on a site that would have allowed it."""
@@ -2586,8 +2662,122 @@ def check_engines_do_not_evaluate_a_string_in_the_browser():
                   "poll through page_flow.wait_for_count instead")
 
 
+def check_an_env_url_never_turns_a_mode_into_a_usage_error():
+    """JUSTJOIN_URL from the environment is a default, not a typed --url.
+
+    `env_config.apply` fills only unset values, so once it has run nothing
+    tells an environment URL from a typed one. With the listings URL that
+    `.env.example` used to ship, `--mode offer` and `--mode facets` exited 2
+    with "--url is a listings URL" although nobody had typed --url.
+    """
+    listing = "https://justjoin.it/job-offers/all-locations"
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        saved_argv, saved_env = sys.argv[:], dict(os.environ)
+        try:
+            os.environ["JUSTJOIN_URL"] = listing
+            for mode in ("facets", "offer"):
+                sys.argv = [module, "--mode", mode]
+                try:
+                    args = engine.parse_args()
+                    got = args.url
+                except SystemExit as e:
+                    got = "exit %s" % e.code
+                equal("%s --mode %s ignores a listings JUSTJOIN_URL"
+                      % (module, mode), got, None)
+            # A URL the user TYPED is still checked against --mode.
+            sys.argv = [module, "--mode", "facets", "--url", listing]
+            try:
+                engine.parse_args()
+                code = 0
+            except SystemExit as e:
+                code = e.code
+            equal("%s still refuses a TYPED --url of another mode" % module,
+                  code, 2)
+        finally:
+            sys.argv = saved_argv
+            os.environ.clear()
+            os.environ.update(saved_env)
+
+
+def check_diff_runs_tracks_real_columns_of_each_mode():
+    """A tracked name the row class lacks compares None with None forever.
+
+    The facets mode used to be diffed with the JobPosting list, 24 of whose
+    25 names a Facet row does not have, so a key going from 100 offers to
+    250 reported "0 changed" and exit 0.
+    """
+    import diff_runs
+    from output_writer import JobPosting, Facet
+    for name, tracked, cls in (
+            ("TRACKED_FIELDS", diff_runs.TRACKED_FIELDS, JobPosting),
+            ("DETAIL_ONLY_FIELDS", diff_runs.DETAIL_ONLY_FIELDS, JobPosting),
+            ("FACET_TRACKED_FIELDS", diff_runs.FACET_TRACKED_FIELDS, Facet)):
+        have = {f.name for f in fields(cls)}
+        check("every name in diff_runs.%s is a %s column"
+              % (name, cls.__name__), set(tracked) <= have,
+              "missing: %s" % sorted(set(tracked) - have))
+    old = [{"sku": "skill:python", "facet_group": "skill",
+            "facet_key": "python", "title": "Python", "offer_count": 100}]
+    new = [dict(old[0], offer_count=250)]
+    for mode in ("facets", None):
+        result = diff_runs.diff_products(
+            old, new, diff_runs.tracked_fields_for(mode, old + new))
+        equal("a facets diff (mode %r) sees an offer_count change" % mode,
+              [c["changes"] for c in result["changed"]],
+              [{"offer_count": {"old": 100, "new": 250}}])
+    equal("a listings run is still diffed on the JobPosting columns",
+          diff_runs.tracked_fields_for("listings", []),
+          diff_runs.TRACKED_FIELDS)
+
+
+def check_csv_cells_are_formula_escaped_in_csv_only():
+    """An employer-written string starting = + - @ TAB CR LF is a formula.
+
+    Escaped with a leading apostrophe in the CSV only; JSON keeps the
+    site's bytes, numbers stay numbers, a joined list is checked too, and
+    the count reaches the sidecar UNDER the caller's extra.
+    """
+    import csv as _csv
+    from output_writer import finish_run, JobPosting
+    rows = [JobPosting(sku="a", title='=HYPERLINK("http://x")',
+                       salary_min=-5, required_skills=["@admin", "python"],
+                       company_name="plain")]
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "out")
+        code = finish_run(rows, prefix, "both", False, blocked=False,
+                          stop_reason="completed", pages_requested=1,
+                          pages_completed=1, start_url="u", final_url="u",
+                          extra={"total_results": 1})
+        equal("the run itself succeeds", code, 0)
+        with open(prefix + ".csv", encoding="utf-8", newline="") as f:
+            got = list(_csv.DictReader(f))[0]
+        equal("a formula title is escaped in the CSV", got["title"],
+              '\'=HYPERLINK("http://x")')
+        equal("a joined list whose first item is formula-shaped is escaped",
+              got["required_skills"], "'@admin | python")
+        equal("a negative NUMBER is left alone", got["salary_min"], "-5")
+        equal("a plain string is left alone", got["company_name"], "plain")
+        data = json.load(open(prefix + ".json", encoding="utf-8"))
+        equal("JSON keeps the site's bytes", data[0]["title"],
+              '=HYPERLINK("http://x")')
+        meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
+        equal("the sidecar counts the escaped cells",
+              meta.get("csv_cells_escaped"), 2)
+        equal("...beside the caller's own extra", meta.get("total_results"), 1)
+        finish_run(rows, prefix, "csv", False, blocked=False,
+                   stop_reason="completed", pages_requested=1,
+                   pages_completed=1, start_url="u", final_url="u",
+                   extra={"csv_cells_escaped": "caller"})
+        meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
+        equal("a caller's value wins a name collision with the count",
+              meta.get("csv_cells_escaped"), "caller")
+
+
 def check_credentials_never_reach_a_log():
-    """§8: an EXCEPTION MESSAGE is a log, and the masker must be GLOBAL.
+    """An EXCEPTION MESSAGE is a log, and the masker must be GLOBAL.
 
     A Playwright connection error repeats the endpoint five times (the
     message plus a four-line call log), so a masker handling only the first
@@ -2657,7 +2847,7 @@ def _tree_state():
 
 
 def check_no_test_mutates_the_working_tree():
-    """§10: one suite used its own file as a fake chromedriver and chmod'd it
+    """One suite used its own file as a fake chromedriver and chmod'd it
     to 755, leaving a mode change in git status.
 
     Compares the tree against how it looked when the suite STARTED, not
@@ -2675,7 +2865,7 @@ def check_no_test_mutates_the_working_tree():
 
 
 def check_captcha_capability_claims_match_the_code():
-    """§19: the most expensive bug this family can ship is a SENTENCE.
+    """The most expensive bug this family can ship is a SENTENCE.
 
     It fails in both directions and this family has shipped both:
 
