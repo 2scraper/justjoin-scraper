@@ -112,9 +112,18 @@ is where the offers endpoint lives.
 This scraper defaults to the endpoint, because it is what the site's own
 front end calls from the browser and it is the only route with pagination.
 That is stated here rather than left to be found. `--route ssr` reads the
-rendered listing page instead: **one page of 100 rows** with a poorer
-schema (no category, no languages, no skill levels), entirely within
-robots.txt.
+rendered listing page instead, entirely within robots.txt: it requests only
+`/job-offers/...` and makes no `/api/` request (checked on 2026-10-07 by
+logging every request of a run). What it gives up:
+
+- **one page of about 50 rows** (it was 100 until the page's payload changed
+  on 2026-10-07; the payload now carries no `meta` and no `totalItems`, so a
+  total is not recorded for this route);
+- a poorer schema (no category, no languages, no skill levels);
+- **four filters only**: `--category`, `--city`, `--remote` and `--keyword`.
+  Every other filter is refused with exit 2 before any request, naming the
+  flag, because the page ignores it and the run would otherwise return an
+  unfiltered page labelled as a filtered one.
 
 ---
 
@@ -377,14 +386,32 @@ fetch that page, or the row fell outside this run's slice of a capped
 result set. `diff_runs.py` warns when either run was capped, and refuses a
 pair that used different modes, sorts, orderings or filters.
 
+It also refuses a run that has **no `.meta.json` beside it**: everything
+those checks read lives in that file, so its absence removes all of them at
+once. `--force` diffs on trust. A sidecar written before filters were
+recorded is compared, with a note that the selections could not be.
+
+A run that fetched an offer queue (`--mode offer`) does not end on an offer
+the board has since delisted: that URL answers 404, is counted in the
+sidecar (`offers_not_found`), and the queue goes on. `--retries 0` is
+refused (exit 2) because it would mean no attempt at all.
+
+`--mode facets` is `partial` (exit 6) when any of its groups is missing from
+the result, naming the groups in the sidecar's `missing_groups`. The Scraper
+API client fetches a single URL, so its facets run is partial by
+construction.
+
 ---
 
 ## Engines
 
 Playwright is primary. Selenium and Puppeteer are parity engines — same
-flags, same modes, same exit codes, same output. Verified on 2026-09-18:
-all three produced **byte-identical rows** (modulo `scraped_at`) and
-identical sidecars for the same command.
+flags, same modes, same exit codes, same output. Verified per mode: on
+2026-09-18 `--mode listings` produced **byte-identical rows** (modulo
+`scraped_at`) and identical sidecars in all three engines. That measurement
+covered listings only; `--mode offer` and the `facets` categories were broken
+in the parity engines until 2026-10-07, when they were fixed and run live in
+all three.
 
 ```bash
 pip install -r requirements.txt -r requirements-playwright.txt   # primary

@@ -60,6 +60,7 @@ from product_parser import (API_PATH, MODES, DEFAULT_MODE, ROUTES,
                             parse_count_response, parse_for_mode,
                             route_of, site_recaptcha_sitekey,
                             split_facets_body, target_url)
+from product_parser import args_problem, missing_facet_groups
 from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
                            ROW_CLASS_BY_MODE, SOURCE_DEFAULT)
 import page_flow
@@ -420,6 +421,39 @@ def _fetch_page_source(session, url: str, timeout_ms: int = 60000) -> str:
     return session.driver.page_source or ""
 
 
+def _fetch_text(session, url: str, timeout_ms: int = 60000) -> str:
+    """Navigate and return the document's text — JSON exactly as served."""
+    _fetch_page_source(session, url, timeout_ms)
+    return _snapshot(session, url) or ""
+
+
+def _fetch_body(session, args, url: str) -> str:
+    """The document the parser is given for this fetch.
+
+    `--mode facets` is TWO endpoints that are one answer — the facet groups,
+    and the category counts from their own route — joined with a separator the
+    parser undoes (`product_parser.FACETS_JOIN`). This engine had no such step
+    at all: it imported FACETS_JOIN and categories_api_url and never used
+    either, so every `--mode facets` run through it silently omitted the
+    `categories` group — 57 rows against Playwright's 82 — and reported
+    `complete`. The group it dropped is the one a plan for reaching past the
+    10,000 cap is built from. Found by running the mode through this engine,
+    which the parity check had never done (it ran --mode listings only).
+    """
+    body = _snapshot(session, url) or ""
+    if args.mode == "facets" and body.strip():
+        try:
+            categories = _fetch_text(session, categories_api_url())
+        except Exception as exc:  # noqa: BLE001 — a driver raises many types
+            logger.warning("The category counts did not load (%s); the run "
+                           "will be partial rather than silently missing "
+                           "them.", _mask_credentials(str(exc))[:120])
+            return body
+        if categories.strip():
+            return body + FACETS_JOIN + categories
+    return body
+
+
 def handle_captcha_if_present(session, args) -> bool:
     """Detect and solve a challenge. True if something was solved.
 
@@ -584,7 +618,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             logger.info("Not solving again on page %d: %d purchase(s) "
                         "already made for it and SOLVES_PER_PAGE is %d.",
                         page_num, solves_bought, page_flow.SOLVES_PER_PAGE)
-        html = _snapshot(session, url) or ""
+        html = _fetch_body(session, args, url)
         state = page_flow.classify(html, http_status, d["current_url"](),
                                    args.mode, args.route)
 
@@ -607,7 +641,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             if found < need:
                 logger.info("Still nothing after %.0fs (%d match(es) for %s).",
                             wait_ms / 1000.0, found, sel)
-            html = _snapshot(session, url) or html
+            html = _fetch_body(session, args, url) or html
             state = page_flow.classify(html, http_status, d["current_url"](),
                                    args.mode, args.route)
 
@@ -762,6 +796,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         return outcome
 
     products, listing = parse_for_mode(html, final_url, args, page_num)
+    if args.mode == "facets":
+        gone = missing_facet_groups(products)
+        if gone:
+            logger.warning("The facet response is missing %s. The groups that "
+                           "arrived are written, and the run is partial: "
+                           "categories are what a plan for reaching past the "
+                           "10,000 cap is built from.", ", ".join(gone))
     logger.info("Parsed %d row(s) from page %d.", len(products), page_num)
 
     if listing is not None:
@@ -921,36 +962,57 @@ def scrape(args) -> int:
                     mode=args.mode, source=SOURCE_DEFAULT,
                     start_url=args.url or "", final_url="")
             total_enumerated = len(offer_slugs)
-            target = offer_slugs[0]
+            # A slug is not an address. Both parity engines assigned it bare,
+            # so `--mode offer` over the sitemap "navigated" to a string like
+            # `acme-dev-warszawa-java` and ended in exit 5 (Selenium) or a
+            # traceback (pyppeteer). Playwright built the URL; this does too.
+            first_url = detail_api_url(offer_slugs[0])
+            if first_url:
+                target = first_url
 
-        if target != args.url:
-            logger.info("Fetching %s", target)
+        if args.url and target != args.url:
+            logger.info("Reading %s through %s — the endpoint is the "
+                        "route with pagination, and the filters your URL "
+                        "names are carried over to it.", args.url, target)
+        logger.info("Fetching %s", target)
 
-            # The board-wide total, for the cap arithmetic. One extra
-            # request, and it buys the difference between a sidecar that
-            # says "complete" and one that says "complete, and a 52%
-            # sample". Never fatal.
-            if args.mode == "listings":
-                try:
-                    site_total = parse_count_response(
-                        _fetch_page_source(session, count_api_url()))
-                except Exception as exc:  # noqa: BLE001
-                    logger.info("The board-wide count did not load (%s); the "
-                                "run continues without the cap share.",
-                                _mask_credentials(str(exc))[:120])
+        # The board-wide total, for the cap arithmetic. One extra
+        # request, and it buys the difference between a sidecar that
+        # says "complete" and one that says "complete, and a 52%
+        # sample". Never fatal.
+        # NOT for --route ssr. That route exists to stay inside robots.txt
+        # (which disallows /api/), and this request goes to
+        # /api/candidate-api/offers/count — so the scraper itself was
+        # fetching a disallowed path on the one route documented as
+        # robots-clean. The rendered page no longer states a total
+        # either (its `meta` block is gone, 2026-10-07), so an ssr
+        # sidecar says nothing about the cap rather than something fetched
+        # from the wrong place.
+        if args.mode == "listings" and args.route != "ssr":
+            try:
+                site_total = parse_count_response(
+                    _fetch_page_source(session, count_api_url()))
+            except Exception as exc:  # noqa: BLE001
+                logger.info("The board-wide count did not load (%s); the "
+                            "run continues without the cap share.",
+                            _mask_credentials(str(exc))[:120])
 
         first = _fetch_one_page(session, args, pool, 1, target)
         outcomes.append(first)
 
+        independent = page_flow.pages_are_independent(args.mode, offer_slugs)
+        first_verdict = page_flow.queue_decision(first.state, None, independent)
         if not first.ok:
             stop_reason = ("page_load_timeout" if first.load_failed
                            else f"blocked_{first.blocked_by}")
             blocked = first.blocked_by is not None
-        elif page_flow.is_terminal(first.state):
-            # A 404, or an offset past the site's 10,000 ceiling. Another
-            # attempt at the same address cannot help and neither is a
-            # block, so the run stops and says which it was.
-            stop_reason = first.state
+        elif first_verdict:
+            # A 404, or an offset past the site's 10,000 ceiling: another
+            # attempt at the same address cannot help and neither is a block.
+            # Not applied to an offer heading a queue of OTHER offers — one
+            # delisted slug must not cancel the run
+            # (`page_flow.queue_decision`).
+            stop_reason = first_verdict
         elif args.mode == "offer" and not offer_slugs:
             pass  # `--url` named one offer; one page is the whole run
         else:
@@ -983,11 +1045,17 @@ def scrape(args) -> int:
                                   if p.sku is None or p.sku not in seen_keys)
                 seen_keys.update(p.sku for p in outcome.products
                                  if p.sku is not None)
-                if not fresh_count:
-                    logger.info("Page %d added no rows not already seen — "
-                                "treating that as the end of the listing.",
-                                page_num)
-                    stop_reason = "no_new_products"
+                # ONE decision, shared with the first page and with the other
+                # engines, about whether this page ends the queue. In --mode
+                # offer it never does: every page is a different offer, and a
+                # 404 is an offer taken down between the sitemap and the
+                # fetch. This engine had no such exemption at all.
+                verdict = page_flow.queue_decision(outcome.state, fresh_count,
+                                                   independent)
+                if verdict:
+                    logger.info("Page %d (%s) ends the queue: %s.",
+                                page_num, outcome.state, verdict)
+                    stop_reason = verdict
                     break
 
                 if index + 1 < len(planned):
@@ -1067,6 +1135,17 @@ def scrape(args) -> int:
                     "" if done >= total_enumerated
                     else "  Pass --pages %d to cover the rest." % total_enumerated)
 
+    # A facets run that lacks a group is partial, not complete. `stop_reason`
+    # is deliberately NOT one of COMPLETE_STOP_REASONS, so finish_run reports
+    # status partial and exit 6 through the family's own rule
+    # rather than through a special case here.
+    # Judged on the MERGED rows, not on any one response, so the verdict does
+    # not depend on how a group went missing (see EXPECTED_FACET_GROUPS).
+    missing_groups = (missing_facet_groups(all_rows)
+                      if args.mode == "facets" and all_rows else [])
+    if missing_groups:
+        stop_reason = "facet_groups_missing"
+
     ok_pages = [o for o in outcomes if o.ok]
     failed_pages = [o.page_num for o in outcomes if not o.ok]
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
@@ -1083,20 +1162,48 @@ def scrape(args) -> int:
     if args.mode == "listings":
         extra.update(cap)
         extra["pages_available"] = pages_available
-        extra["items_per_page"] = args.per_page
-        extra["sort"] = args.sort
-        extra["order"] = args.order
+        if args.route == "ssr":
+            # The rendered page serves what the site chose to render — 50 rows
+            # on 2026-10-07, 100 a fortnight earlier — in the site's own order.
+            # `--per-page`, `--sort` and `--order` are refused for this route
+            # (`args_problem`), so recording them here would put three values
+            # in the sidecar that nothing applied. Record what ARRIVED instead.
+            extra["items_per_page"] = (len(outcomes[0].products) or None
+                                       if outcomes else None)
+        else:
+            extra["items_per_page"] = args.per_page
+            extra["sort"] = args.sort
+            extra["order"] = args.order
         # The ordering decides WHICH rows are in the file, not just their
         # order: the same query under `publishedAt` and under `salary`
         # overlapped on 5 of 100 ids (measured 2026-09-18), because each is
         # a different slice of a capped result set. So it is recorded, and
         # `diff_runs.py` refuses to compare two runs that disagree on it.
         filters = filters_from_args(args).as_params()
-        if filters:
-            extra["filters"] = filters
+        if args.route == "ssr":
+            # A radius is the endpoint's parameter; the page's own path takes
+            # a city and no radius, so claiming one was applied would be the
+            # same overstatement as claiming a filter it ignored.
+            filters.pop("cityRadius", None)
+        # ALWAYS recorded, even when empty. `diff_runs.py` reads the absence of
+        # this key as "this run did not say", which it must be able to tell
+        # apart from "this run used no filters".
+        extra["filters"] = filters
+    elif args.mode == "facets" and missing_groups:
+        extra["missing_groups"] = missing_groups
     elif args.mode == "offer":
         extra["offers_enumerated"] = total_enumerated or None
         extra["offers_fetched"] = len(ok_pages)
+        # Which pages of the queue were an offer the site no longer has. A 404
+        # is ordinary here — the sitemap is generated ahead of the fetch — so
+        # it does not make the run partial, but it is not invisible either:
+        # `offers_fetched` counts pages that ANSWERED, and without this a
+        # consumer cannot tell an answer of "gone" from an offer that was read.
+        not_found = sorted(o.page_num for o in outcomes
+                           if o.state == "not_found")
+        extra["offers_not_found"] = len(not_found)
+        if not_found:
+            extra["offers_not_found_pages"] = not_found
 
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
@@ -1360,23 +1467,12 @@ def parse_args():
         p.error("--per-page must be between 1 and %d; justjoin.it answers "
                 "HTTP 400 above that." % MAX_ITEMS_COUNT)
 
-    if args.mode != "listings":
-        # Refused rather than ignored, so a filtered `--mode offer` run
-        # cannot look like it narrowed the enumeration when it did not.
-        used = [name for name, value in (
-            ("--category", args.category), ("--city", args.city),
-            ("--keyword", args.keyword), ("--remote", args.remote),
-            ("--experience", args.experience), ("--language", args.language),
-            ("--employment", args.employment),
-            ("--working-time", args.working_time),
-            ("--with-salary", args.with_salary)) if value]
-        if used:
-            p.error("%s filter%s the offers endpoint, which --mode %s does "
-                    "not read. Use --mode listings to filter, then --mode "
-                    "offer --slugs-file on its output to fetch those offers "
-                    "in full."
-                    % (", ".join(used), "" if len(used) == 1 else "s",
-                       args.mode))
+    # ONE shared validation (product_parser.args_problem) instead of a copy per
+    # engine: filters outside --mode listings, the filters the rendered route
+    # cannot apply, and --retries 0 (which skipped navigation entirely).
+    problem = args_problem(args)
+    if problem:
+        p.error(problem)
 
     # The sidecar's run label. `--category` is a real site filter here, so
     # unlike the repo this engine was ported from it is NOT reused as the

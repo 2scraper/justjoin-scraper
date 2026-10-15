@@ -555,6 +555,1031 @@ def check_a_delisted_offer_is_read_from_the_body_when_there_is_no_status():
               "a status is captured and then not used")
 
 
+# ---------------------------------------------------------------------------
+# The queue: one delisted offer must not end it
+# ---------------------------------------------------------------------------
+#
+# Every earlier check of the 404 handling asserted that the CLASSIFIER named
+# the state (`not_found`). None of them drove a loop over it, so a third-party
+# audit found what 600 green checks had not: a good -> 404 -> good queue
+# fetched two of its three offers, wrote one row, and reported `complete` with
+# `stop_reason: no_new_products`. These checks run the real `scrape()` of every
+# engine that is installed, with the driver and the per-page fetch stubbed.
+
+def _drive_scrape(engine, argv, outcome_for, side=None):
+    """Run `engine.scrape` on `argv` and return (exit, urls fetched, sidecar).
+
+    `outcome_for(url)` -> (state, [skus]) says what each fetched URL "served".
+    `side`, if given, collects every request made outside the listing itself.
+    Only the browser session and the per-page fetch are replaced; the loop
+    that decides what a page means for the REST of the queue is the real one.
+    """
+    import contextlib
+    import shutil
+
+    class FakeSession:
+        def __init__(self, *a, **k):
+            self.pool = None
+
+        def open(self):
+            return self
+
+        def close(self):
+            pass
+
+        def relaunch(self):
+            pass
+
+    class FakeBridge:
+        def close(self):
+            pass
+
+    class FakeCtx:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *a):
+            return False
+
+    fetched = []
+
+    def fake_fetch(session, args, pool, page_num, url):
+        fetched.append(url)
+        state, skus = outcome_for(url)
+        outcome = engine.PageOutcome(page_num=page_num, url=url)
+        outcome.state = state
+        outcome.final_url = url
+        outcome.pages_available = 10
+        # A plain string is a sku (a JobPosting is built for it); anything
+        # else is a ready-made row, which is how --mode facets supplies Facets.
+        outcome.products = [
+            row if not isinstance(row, str)
+            else JobPosting(sku=row, title=row, page=page_num, position=i + 1)
+            for i, row in enumerate(skus)]
+        return outcome
+
+    def record(session, url, **kwargs):
+        # Every request the engine makes OUTSIDE the listing itself — the
+        # board count, a sitemap. `side` lets a check ask what they were.
+        if side is not None:
+            side.append(url)
+        return ""
+
+    patches = {"_fetch_one_page": fake_fetch,
+               "_fetch_text": record,
+               "_fetch_page_source": record}
+    for name in ("_BrowserSession", "_Session"):
+        if hasattr(engine, name):
+            patches[name] = FakeSession
+    if hasattr(engine, "_AsyncBridge"):
+        patches["_AsyncBridge"] = FakeBridge
+    if hasattr(engine, "sync_playwright"):
+        patches["sync_playwright"] = lambda: FakeCtx()
+
+    saved = {k: getattr(engine, k) for k in patches if hasattr(engine, k)}
+    saved_argv = sys.argv[:]
+    tmp = tempfile.mkdtemp(prefix="jj_queue_")
+    try:
+        for key, value in patches.items():
+            setattr(engine, key, value)
+        out = os.path.join(tmp, "run")
+        sys.argv = [engine.__name__ + ".py"] + argv + ["--out", out,
+                                                       "--delay", "0",
+                                                       "--format", "json"]
+        args = engine.parse_args()
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = engine.scrape(args)
+        meta_path = out + ".meta.json"
+        meta = (json.load(open(meta_path, encoding="utf-8"))
+                if os.path.exists(meta_path) else None)
+        return code, fetched, meta
+    finally:
+        sys.argv = saved_argv
+        for key, value in saved.items():
+            setattr(engine, key, value)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _offer_queue_file(slugs):
+    handle = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
+                                         prefix="jj_slugs_")
+    handle.write("\n".join(slugs) + "\n")
+    handle.close()
+    return handle.name
+
+
+def check_the_queue_decision_table():
+    """The one function every loop now asks, pinned as a table."""
+    qd = page_flow.queue_decision
+    # Independent pages (--mode offer with a queue): nothing ends the queue.
+    for state in ("content", "empty", "not_found", "cap_exceeded", None):
+        for fresh in (0, 5, None):
+            equal("independent page, state=%s fresh=%s" % (state, fresh),
+                  qd(state, fresh, True), None)
+    # A listing: a terminal state or a page that adds nothing ends it.
+    equal("a listing 404 ends it, and says so",
+          qd("not_found", 0, False), "not_found")
+    equal("past the cap ends it, and says so",
+          qd("cap_exceeded", None, False), "cap_exceeded")
+    equal("a page with nothing new ends it", qd("content", 0, False),
+          "no_new_products")
+    equal("a page with something new does not", qd("content", 3, False), None)
+    equal("page 1 (fresh unknown) is not judged on freshness",
+          qd("content", None, False), None)
+    # What counts as independent.
+    equal("offer + a queue", page_flow.pages_are_independent("offer", ["a"]),
+          True)
+    equal("offer + NO queue (a single --url) is not",
+          page_flow.pages_are_independent("offer", []), False)
+    equal("a listing never is",
+          page_flow.pages_are_independent("listings", ["a", "b"]), False)
+
+
+def check_a_delisted_offer_does_not_cut_the_queue_in_any_engine():
+    """good/404/good, 404/good/good and good/good/404, through each engine's
+    own loop. All three offers must be REQUESTED, the two live ones written,
+    and the run must end `completed` — not `no_new_products`."""
+    ran = 0
+    shapes = {
+        "404 in the middle": ["a", "gone", "b"],
+        "404 FIRST (a sitemap whose head has been taken down)":
+            ["gone", "a", "b"],
+        "404 last": ["a", "b", "gone"],
+    }
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        for label, slugs in shapes.items():
+            path = _offer_queue_file(slugs)
+            try:
+                def outcome_for(url):
+                    if url.endswith("/gone"):
+                        return "not_found", []
+                    return "content", [url.rsplit("/", 1)[-1]]
+                code, fetched, meta = _drive_scrape(
+                    engine, ["--mode", "offer", "--slugs-file", path,
+                             "--pages", "3"], outcome_for)
+            finally:
+                os.unlink(path)
+            ran += 1
+            tag = "%s, %s" % (module, label)
+            equal("%s: every offer was requested" % tag, len(fetched), 3)
+            equal("%s: exit 0" % tag, code, 0)
+            check("%s: a sidecar was written" % tag, meta is not None)
+            if meta is None:
+                continue
+            equal("%s: the live offers were written" % tag,
+                  meta["products"], 2)
+            equal("%s: the run ended because the queue did, not because a "
+                  "page was empty" % tag, meta["stop_reason"], "completed")
+            equal("%s: the sidecar names the offer that was not found" % tag,
+                  meta.get("offers_not_found"), 1)
+    if ran == 0:
+        skip("offer queue", "no engine library installed here")
+
+
+def check_a_listing_that_repeats_itself_still_ends_the_run():
+    """The control for the other direction. If `independent` were applied to
+    everything, a listing answering page 2 with page 1 again would be
+    re-collected for as long as it was asked to, and reported complete."""
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+
+        def outcome_for(url):
+            return "content", ["same-offer"]
+        code, fetched, meta = _drive_scrape(
+            engine, ["--category", "python", "--pages", "3",
+                     "--per-page", "1"], outcome_for)
+        equal("%s: page 3 was never requested" % module, len(fetched), 2)
+        check("%s: a sidecar was written" % module, meta is not None)
+        if meta is not None:
+            equal("%s: it says why it stopped" % module,
+                  meta["stop_reason"], "no_new_products")
+            equal("%s: and holds the one row" % module, meta["products"], 1)
+
+
+def check_the_concurrent_workers_agree_about_a_delisted_offer():
+    """The Playwright engine's concurrent path set the same "end of listing"
+    event on a 404 that the sequential loop tripped over."""
+    engine = _import_engine("playwright_scraper")
+    if engine is None:
+        return
+    import threading
+
+    class Args:
+        delay = 0
+        retries = 1
+        retry_delay = 0
+        out = "unused"
+        mode = "offer"
+
+    seen = []
+    lock = threading.Lock()
+
+    def fake_fetch(session, args, pool, page_num, url):
+        with lock:
+            seen.append(page_num)
+        outcome = engine.PageOutcome(page_num=page_num, url=url)
+        gone = page_num == 3
+        outcome.state = "not_found" if gone else "content"
+        outcome.products = [] if gone else [object()]
+        return outcome
+
+    class FakeSession:
+        def __init__(self, *a, **k):
+            self.pool = None
+
+        def open(self):
+            return self
+
+        def close(self):
+            pass
+
+    class FakeCtx:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *a):
+            return False
+
+    saved = (engine._fetch_one_page, engine._BrowserSession,
+             engine.sync_playwright)
+    engine._fetch_one_page = fake_fetch
+    engine._BrowserSession = FakeSession
+    engine.sync_playwright = lambda: FakeCtx()
+    try:
+        specs = [(n, "u%d" % n) for n in range(2, 9)]
+        results, unattempted, exhausted = engine._fetch_pages_concurrently(
+            Args(), None, specs, 3)
+    finally:
+        (engine._fetch_one_page, engine._BrowserSession,
+         engine.sync_playwright) = saved
+    equal("every queued offer was fetched, one of them a 404",
+          sorted(seen), list(range(2, 9)))
+    equal("nothing was left unattempted", unattempted, [])
+    equal("and dispatch was not stopped", exhausted, False)
+
+
+def check_no_engine_touches_the_pool_without_asking_whether_there_is_one():
+    """A run with no proxy has `pool = None`. Any `pool.<attr>` reached on that
+    path is an AttributeError traceback (exit 1) where the run should have
+    reported the failure it was handling (exit 5).
+
+    It was reached twice in one family of code. v0.1.0 fixed `mask(pool.current)`
+    in the block-retry branch of the two parity engines, and the same engine
+    still had `pool.advance(...)` unguarded two screens up, on the path every
+    navigation failure takes: `block_retries` is 1 without a pool, not 0, so
+    the test `block_attempt < block_retries` was true exactly when there was
+    nothing to rotate to. A live `--mode offer` run found it, because its
+    first address was bad. No offline check could: the per-page fetch is the
+    thing a stub replaces.
+
+    So assert it statically, on every engine: each `pool.<attr>` must sit under
+    something that has asked about `pool` or `has_pool` first — an `if`, a
+    conditional expression, or the left side of an `and`.
+    """
+    names = ("pool", "has_pool")
+
+    def mentions(node):
+        return any(isinstance(n, ast.Name) and n.id in names
+                   for n in ast.walk(node))
+
+    for module in ENGINES:
+        path = os.path.join(HERE, module + ".py")
+        if not os.path.exists(path):
+            continue
+        tree = ast.parse(open(path, encoding="utf-8").read())
+        parent = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parent[child] = node
+
+        accesses = [n for n in ast.walk(tree)
+                    if isinstance(n, ast.Attribute)
+                    and isinstance(n.value, ast.Name) and n.value.id == "pool"]
+        check("%s: the scan found pool accesses to judge" % module,
+              len(accesses) >= 5, "%d found" % len(accesses))
+
+        def enclosing_function(node):
+            while node in parent:
+                node = parent[node]
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    return node
+            return None
+
+        def falsy_when_no_pool(function):
+            """Names a function sets to a FALSY value when there is no pool:
+            `proxy = f(pool.current) if pool else None`. Testing such a name
+            is asking about the pool. `block_retries = ... if has_pool else 1`
+            is NOT one — its else is truthy, which is exactly the shape of the
+            defect this check exists for, so it must not count."""
+            found = set()
+            for n in ast.walk(function):
+                if (isinstance(n, ast.Assign) and isinstance(n.value, ast.IfExp)
+                        and mentions(n.value.test)
+                        and isinstance(n.value.orelse, ast.Constant)
+                        and not n.value.orelse.value):
+                    found.update(t.id for t in n.targets
+                                 if isinstance(t, ast.Name))
+            return found
+
+        unguarded = []
+        for access in accesses:
+            function = enclosing_function(access)
+            derived = falsy_when_no_pool(function) if function else set()
+
+            def asks(test):
+                return mentions(test) or any(
+                    isinstance(n, ast.Name) and n.id in derived
+                    for n in ast.walk(test))
+
+            guarded, cur = False, access
+            # An early exit ahead of the access guards everything after it:
+            # `if not pool: return None`.
+            for stmt in (function.body if function else []):
+                if (isinstance(stmt, ast.If) and stmt.lineno < access.lineno
+                        and mentions(stmt.test) and stmt.body
+                        and isinstance(stmt.body[-1], (ast.Return, ast.Raise))):
+                    guarded = True
+            while cur in parent and not guarded:
+                par = parent[cur]
+                if isinstance(par, (ast.If, ast.While)) and cur is not par.test:
+                    guarded = asks(par.test)
+                elif isinstance(par, ast.IfExp) and cur is par.body:
+                    guarded = asks(par.test)
+                elif isinstance(par, ast.BoolOp):
+                    earlier = par.values[:par.values.index(cur)]
+                    guarded = any(asks(v) for v in earlier)
+                cur = par
+            if not guarded:
+                unguarded.append("line %d: pool.%s" % (access.lineno,
+                                                      access.attr))
+        check("%s: every pool.<attr> is guarded" % module, not unguarded,
+              "; ".join(unguarded))
+
+
+# ---------------------------------------------------------------------------
+# --route ssr: only what the rendered page applies, and no request to /api/
+# ---------------------------------------------------------------------------
+#
+# An audit ran `--route ssr --experience senior --with-salary --keyword rust`
+# and found the fetched address was the bare all-locations page, with the
+# sidecar recording all three filters as if they had narrowed it. Measured
+# live afterwards: 23 of 50 rows were senior, 28 of 50 priced, and a sort the
+# page also ignored was written into the sidecar beside them.
+
+import types as _types
+
+
+def _ssr_args(**over):
+    base = dict(mode="listings", route="ssr", url=None, category=None,
+                city=None, remote=False, keyword=None, experience=None,
+                language=None, employment=None, working_time=None,
+                with_salary=False, city_radius=30, per_page=pp.DEFAULT_ITEMS_COUNT,
+                sort=pp.DEFAULT_SORT, order=pp.DEFAULT_ORDER, retries=3)
+    base.update(over)
+    return _types.SimpleNamespace(**base)
+
+
+def check_the_ssr_address_carries_exactly_what_the_page_applies():
+    cases = [
+        ({}, "https://justjoin.it/job-offers/all-locations"),
+        ({"city": "warszawa"}, "https://justjoin.it/job-offers/warszawa"),
+        ({"category": "python"},
+         "https://justjoin.it/job-offers/all-locations/python"),
+        ({"city": "krakow", "category": "python"},
+         "https://justjoin.it/job-offers/krakow/python"),
+        ({"remote": True}, "https://justjoin.it/job-offers/remote"),
+        ({"remote": True, "category": "python"},
+         "https://justjoin.it/job-offers/remote/python"),
+        ({"keyword": "rust"},
+         "https://justjoin.it/job-offers/all-locations?keyword=rust"),
+        ({"city": "warszawa", "category": "python", "keyword": "django"},
+         "https://justjoin.it/job-offers/warszawa/python?keyword=django"),
+    ]
+    for over, want in cases:
+        equal("ssr address for %s" % (over or "no filters"),
+              pp.target_url(_ssr_args(**over)), want)
+
+    # A user URL is REBUILT, not fetched as given. As given, the flags beside
+    # it were accepted and dropped.
+    got = pp.target_url(_ssr_args(
+        url="https://justjoin.it/job-offers/warszawa", keyword="rust"))
+    equal("--url plus --keyword reaches the address",
+          got, "https://justjoin.it/job-offers/warszawa?keyword=rust")
+    got = pp.target_url(_ssr_args(
+        url="https://justjoin.it/job-offers/warszawa/python"))
+    equal("--url alone round-trips", got,
+          "https://justjoin.it/job-offers/warszawa/python")
+    equal("the supported set is the four the page applies",
+          pp.SSR_FILTERS, ("category", "city", "remote", "keyword"))
+
+
+def check_filters_the_rendered_page_ignores_are_refused_before_any_request():
+    problem = pp.args_problem
+    ok = _ssr_args(category="python", city="warszawa", keyword="rust")
+    equal("the four supported filters pass", problem(ok), None)
+    for flag, over in (("--experience", {"experience": ["senior"]}),
+                       ("--with-salary", {"with_salary": True}),
+                       ("--language", {"language": ["en"]}),
+                       ("--employment", {"employment": ["b2b"]}),
+                       ("--working-time", {"working_time": ["full_time"]}),
+                       ("--sort", {"sort": "salary"}),
+                       ("--order", {"order": "ascending"}),
+                       ("--per-page", {"per_page": 20}),
+                       ("--city-radius", {"city": "warszawa",
+                                          "city_radius": 50})):
+        msg = problem(_ssr_args(**over))
+        check("--route ssr refuses %s" % flag, msg and flag in msg, msg)
+    msg = problem(_ssr_args(city="warszawa", remote=True))
+    check("a city AND remote cannot share a path",
+          msg and "--city and --remote" in msg, msg)
+    # And it names every offender at once rather than one per attempt.
+    msg = problem(_ssr_args(experience=["senior"], with_salary=True,
+                            sort="salary"))
+    check("it lists them all in one message",
+          msg and all(f in msg for f in ("--experience", "--with-salary",
+                                         "--sort")), msg)
+    # The same flags are fine on the route that applies them.
+    for over in ({"experience": ["senior"], "with_salary": True,
+                  "sort": "salary", "per_page": 20, "language": ["en"]},):
+        equal("--route api accepts what ssr refuses",
+              problem(_ssr_args(route="api", **over)), None)
+    # Offer and facets read no query at all.
+    msg = problem(_ssr_args(mode="offer", route="api", category="python"))
+    check("--mode offer refuses a filter", msg and "--category" in msg, msg)
+
+
+def check_retries_below_one_is_refused_because_it_means_no_navigation():
+    """`--retries` is the number of ATTEMPTS. 0 made `range(1, 0 + 1)` empty,
+    so the page was never fetched, and the run said 'came back as unknown' and
+    exited 4 — 'nothing found' on a healthy site, for a fetch that never
+    happened (blocked, empty and failed are different answers)."""
+    for value in (0, -1):
+        msg = pp.args_problem(_ssr_args(route="api", retries=value))
+        check("--retries %d is refused" % value, msg and "--retries" in msg,
+              msg)
+    equal("--retries 1 is the single-attempt spelling",
+          pp.args_problem(_ssr_args(route="api", retries=1)), None)
+
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        saved = sys.argv[:]
+        err = io.StringIO()
+        code = None
+        try:
+            sys.argv = [module + ".py", "--retries", "0"]
+            with contextlib_redirect_stderr(err):
+                try:
+                    engine.parse_args()
+                except SystemExit as exc:
+                    code = exc.code
+        finally:
+            sys.argv = saved
+        ran += 1
+        equal("%s exits 2 on --retries 0" % module, code, 2)
+        check("%s says why" % module, "--retries" in err.getvalue(),
+              err.getvalue()[-160:])
+    if ran == 0:
+        skip("--retries", "no engine library installed here")
+
+
+def contextlib_redirect_stderr(stream):
+    import contextlib
+    return contextlib.redirect_stderr(stream)
+
+
+def check_the_engines_refuse_unsupported_ssr_flags_through_the_shared_check():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        saved = sys.argv[:]
+        err = io.StringIO()
+        code = None
+        try:
+            sys.argv = [module + ".py", "--route", "ssr", "--experience",
+                        "senior", "--with-salary"]
+            with contextlib_redirect_stderr(err):
+                try:
+                    engine.parse_args()
+                except SystemExit as exc:
+                    code = exc.code
+        finally:
+            sys.argv = saved
+        ran += 1
+        equal("%s exits 2" % module, code, 2)
+        check("%s names the flags the page ignores" % module,
+              "--experience" in err.getvalue()
+              and "--with-salary" in err.getvalue(), err.getvalue()[-200:])
+    if ran == 0:
+        skip("ssr flags", "no engine library installed here")
+
+
+def check_the_ssr_sidecar_records_what_arrived_not_what_was_asked():
+    """`sort`, `order` and `items_per_page` describe a REQUEST the endpoint
+    honours. The rendered page honours none of them, so an ssr sidecar that
+    carried them would say a run was sorted by salary when the page had served
+    its own order. And `diff_runs.py` reads `sort` and `filters` to decide
+    whether two runs are comparable, so a wrong value there is not cosmetic."""
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        _, _, meta = _drive_scrape(
+            engine, ["--route", "ssr", "--city", "warszawa", "--keyword",
+                     "rust", "--pages", "1"],
+            lambda url: ("content", ["a", "b", "c"]))
+        ran += 1
+        check("%s: a sidecar was written" % module, meta is not None)
+        if meta is None:
+            continue
+        equal("%s: no sort is claimed for a page that has none" % module,
+              (meta.get("sort"), meta.get("order")), (None, None))
+        equal("%s: the page size is what ARRIVED" % module,
+              meta.get("items_per_page"), 3)
+        applied = meta.get("filters") or {}
+        equal("%s: the keyword the page applied is recorded" % module,
+              applied.get("keywords"), "rust")
+        check("%s: no radius is claimed — the page's path takes none" % module,
+              "cityRadius" not in applied, str(applied))
+        equal("%s: the route is recorded" % module, meta.get("route"), "ssr")
+        equal("%s: and so is the absence of any cap arithmetic" % module,
+              (meta.get("site_total"), meta.get("capped_by_site")),
+              (None, None))
+        _, _, api_meta = _drive_scrape(
+            engine, ["--route", "api", "--pages", "1", "--per-page", "7"],
+            lambda url: ("content", ["a"]))
+        equal("%s: the api route still records the sort it sent" % module,
+              (api_meta.get("sort"), api_meta.get("items_per_page")),
+              (pp.DEFAULT_SORT, 7))
+    if ran == 0:
+        skip("ssr sidecar", "no engine library installed here")
+
+
+def check_the_ssr_route_never_requests_a_path_robots_txt_disallows():
+    """`--route ssr` is documented as the robots-clean route, and the scraper
+    itself was fetching /api/candidate-api/offers/count on it to compute the
+    cap share — a path robots.txt disallows. Asserted on every request the
+    engine makes outside the listing itself, with the api route as the
+    control (it SHOULD ask for the count, or this check proves nothing)."""
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        for route, expect_api in (("ssr", False), ("api", True)):
+            side = []
+            _drive_scrape(engine, ["--route", route, "--pages", "1"],
+                          lambda url: ("content", ["x"]), side=side)
+            ran += 1
+            hit = [u for u in side if pp.API_PATH in u]
+            if expect_api:
+                check("%s: the api route DOES ask for the board count"
+                      % module, hit, "side requests: %r" % side)
+            else:
+                equal("%s: the ssr route makes no /api/ request" % module,
+                      hit, [])
+    if ran == 0:
+        skip("ssr robots", "no engine library installed here")
+
+
+# ---------------------------------------------------------------------------
+# --mode facets: a missing group is a partial run, not a complete one
+# ---------------------------------------------------------------------------
+#
+# Two findings, one defect class. An audit traced that a failed request for
+# the category counts is caught, logged, and the run continues as `complete`.
+# Running the mode through the other engines then showed Selenium and
+# pyppeteer never made that request at all: 57 rows against 82, every time.
+# The missing group is the one the README's plan for reaching past the
+# 10,000-offer cap is built from.
+
+def _facet_rows(with_categories=True, drop=()):
+    rows = pp.parse_facets_response(
+        FACETS_JSON,
+        categories_text=CATEGORIES_JSON if with_categories else None)
+    return [r for r in rows if r.facet_group not in drop]
+
+
+def check_missing_facet_groups_are_judged_on_the_rows():
+    equal("a full read misses nothing",
+          pp.missing_facet_groups(_facet_rows()), [])
+    equal("no categories request, no categories group",
+          pp.missing_facet_groups(_facet_rows(with_categories=False)),
+          ["categories"])
+    equal("a group the site stopped publishing is named too",
+          pp.missing_facet_groups(_facet_rows(drop=("languages",))),
+          ["languages"])
+    equal("several, in the order the groups are expected",
+          pp.missing_facet_groups(
+              _facet_rows(with_categories=False, drop=("workingTimes",))),
+          ["workingTimes", "categories"])
+    # A categories body that arrives and will not parse is the same loss by a
+    # different road, and the judgement must not depend on which one it was.
+    broken = pp.parse_facets_response(FACETS_JSON,
+                                      categories_text="<html>502</html>")
+    equal("an unparseable categories body is a missing group, not a crash",
+          pp.missing_facet_groups(broken), ["categories"])
+    equal("the expected set is the seven the board publishes",
+          sorted(pp.EXPECTED_FACET_GROUPS),
+          sorted(set(pp.FACET_GROUPS) | {pp.CATEGORY_FACET_GROUP}))
+
+
+def check_a_facets_run_missing_a_group_is_partial_in_every_engine():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        cases = [("complete read", _facet_rows(), 0, "complete", None),
+                 ("no categories", _facet_rows(with_categories=False), 6,
+                  "partial", ["categories"]),
+                 ("a renamed group", _facet_rows(drop=("languages",)), 6,
+                  "partial", ["languages"])]
+        for label, rows, want_exit, want_status, want_missing in cases:
+            code, fetched, meta = _drive_scrape(
+                engine, ["--mode", "facets"], lambda url, rows=rows:
+                ("content", rows))
+            ran += 1
+            tag = "%s, %s" % (module, label)
+            equal("%s: exit" % tag, code, want_exit)
+            check("%s: a sidecar was written" % tag, meta is not None)
+            if meta is None:
+                continue
+            equal("%s: status" % tag, meta["status"], want_status)
+            equal("%s: the sidecar names what is missing" % tag,
+                  meta.get("missing_groups"), want_missing)
+            if want_missing:
+                equal("%s: and why the run stopped" % tag,
+                      meta["stop_reason"], "facet_groups_missing")
+                equal("%s: the groups that DID arrive were still written"
+                      % tag, meta["products"], len(rows))
+            else:
+                equal("%s: a clean read stops as a one-page route" % tag,
+                      meta["stop_reason"], "single_page_route")
+    if ran == 0:
+        skip("facets partial", "no engine library installed here")
+
+
+def check_every_engine_asks_for_the_category_counts():
+    """The Selenium and pyppeteer engines imported `FACETS_JOIN` and
+    `categories_api_url` and used neither. Driven through each engine's own
+    `_fetch_body` so an engine that forgets the second request fails here
+    instead of shipping 57 rows as a complete run."""
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        requested = []
+
+        def snapshot(*a, **k):
+            return FACETS_JSON
+
+        def text_ok(session, url, **k):
+            requested.append(url)
+            return CATEGORIES_JSON
+
+        def text_down(session, url, **k):
+            requested.append(url)
+            # The type each engine really catches: Playwright's own Error,
+            # and anything at all from the two whose drivers raise many.
+            raise getattr(engine, "PWError", RuntimeError)(
+                "net::ERR_CONNECTION_RESET")
+
+        saved = (engine._snapshot, engine._fetch_text)
+        args = _types.SimpleNamespace(mode="facets")
+        session = _types.SimpleNamespace(page=None, driver=None)
+        try:
+            engine._snapshot = snapshot
+            engine._fetch_text = text_ok
+            joined = engine._fetch_body(session, args, "u")
+            engine._fetch_text = text_down
+            degraded = engine._fetch_body(session, args, "u")
+            engine._fetch_text = text_ok
+            other = engine._fetch_body(
+                session, _types.SimpleNamespace(mode="listings"), "u")
+        finally:
+            engine._snapshot, engine._fetch_text = saved
+        ran += 1
+        check("%s: categories are requested from their own endpoint" % module,
+              any(pp.CATEGORIES_PATH in u for u in requested), str(requested))
+        check("%s: and joined onto the facet body" % module,
+              pp.FACETS_JOIN in joined)
+        equal("%s: so a parsed run carries all seven groups" % module,
+              len({r.facet_group for r in pp.parse_for_mode(
+                  joined, "", _types.SimpleNamespace(
+                      mode="facets", route="api", per_page=1), 1)[0]}), 7)
+        equal("%s: a failed request degrades to the bare facet body" % module,
+              degraded, FACETS_JSON)
+        equal("%s: and no other mode asks at all" % module, other,
+              FACETS_JSON)
+    if ran == 0:
+        skip("facets body", "no engine library installed here")
+
+
+# ---------------------------------------------------------------------------
+# diff_runs: no sidecar is not a pass
+# ---------------------------------------------------------------------------
+#
+# `_check_comparable` skipped a run whose sidecar was missing ("nothing to
+# check"), but every check it makes — complete?, which mode?, sorted and
+# filtered how?, capped? — lives in that sidecar. Its absence removed all the
+# guards at once and the diff went ahead as if each had passed. The leniency
+# had one real cause, which no longer exists: scraper_api_client.py wrote no
+# sidecar. It does now.
+
+def _write_run(tmp, name, rows, meta=None):
+    path = os.path.join(tmp, name + ".json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(rows, fh)
+    if meta is not None:
+        with open(os.path.join(tmp, name + ".meta.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(meta, fh)
+    return path
+
+
+def _diff(old, new, *extra):
+    import contextlib
+    import diff_runs
+    saved = sys.argv[:]
+    out = io.StringIO()
+    try:
+        sys.argv = ["diff_runs.py", "--old", old, "--new", new] + list(extra)
+        with contextlib.redirect_stdout(out):
+            code = diff_runs.main()
+    finally:
+        sys.argv = saved
+    return code, out.getvalue()
+
+
+def _meta(**over):
+    base = {"mode": "listings", "status": "complete",
+            "stop_reason": "completed", "pages_requested": 1,
+            "pages_completed": 1, "pages_failed": [], "sort": "publishedAt",
+            "order": "descending", "filters": {}}
+    base.update(over)
+    return base
+
+
+def check_diff_runs_refuses_a_run_with_no_sidecar():
+    rows = [{"sku": "a", "title": "x", "data_source": "api"}]
+    with tempfile.TemporaryDirectory() as tmp:
+        bare_old = _write_run(tmp, "bare_old", rows)
+        bare_new = _write_run(tmp, "bare_new", rows)
+        good = _write_run(tmp, "good", rows, _meta())
+
+        code, out = _diff(bare_old, bare_new)
+        equal("two bare JSON files are refused", code, 2)
+        check("and the reason says what is missing",
+              ".meta.json" in out and "--force" in out, out[-200:])
+        code, out = _diff(bare_old, good)
+        equal("one bare file is refused too", code, 2)
+        code, out = _diff(good, bare_new)
+        equal("on either side", code, 2)
+        check("the message names the file that lacks it",
+              "bare_new" in out, out[-200:])
+        code, _ = _diff(bare_old, bare_new, "--force")
+        equal("--force is the explicit way round", code, 0)
+        code, _ = _diff(good, good)
+        equal("two runs WITH sidecars still diff", code, 0)
+
+
+def check_diff_runs_tells_unknown_filters_from_none():
+    """An engine run that used no filters records `filters: {}`; a sidecar that
+    does not mention filters at all did not SAY. Those are different, and
+    treating them alike either refuses a comparison that is fine or waves
+    through one that is not."""
+    rows = [{"sku": "a", "title": "x", "data_source": "api"}]
+    with tempfile.TemporaryDirectory() as tmp:
+        none_a = _write_run(tmp, "none_a", rows, _meta(filters={}))
+        none_b = _write_run(tmp, "none_b", rows, _meta(filters={}))
+        python = _write_run(tmp, "python", rows,
+                            _meta(filters={"categories": "python"}))
+        silent = _write_run(tmp, "silent", rows,
+                            {k: v for k, v in _meta().items()
+                             if k != "filters"})
+        code, _ = _diff(none_a, none_b)
+        equal("none against none is comparable", code, 0)
+        code, out = _diff(none_a, python)
+        equal("none against a filter is refused", code, 2)
+        check("naming the filters", "categories" in out, out[-250:])
+        code, out = _diff(python, silent)
+        equal("a run that did not say is compared, not refused", code, 0)
+        check("and the diff says the selections could not be compared",
+              "did not record which filters" in out, out[-250:])
+
+
+def check_every_engine_records_its_filters_even_when_there_are_none():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        _, _, meta = _drive_scrape(engine, ["--pages", "1"],
+                                   lambda url: ("content", ["a"]))
+        ran += 1
+        check("%s: a sidecar was written" % module, meta is not None)
+        if meta is not None:
+            check("%s: an unfiltered run records `filters` as empty, not as "
+                  "nothing" % module, meta.get("filters") == {},
+                  repr(meta.get("filters", "<absent>")))
+    if ran == 0:
+        skip("recorded filters", "no engine library installed here")
+
+
+# ---------------------------------------------------------------------------
+# scraper_api_client: it writes a sidecar, and picks the row class by mode
+# ---------------------------------------------------------------------------
+
+def _drive_client(url, mode, body, fmt="json"):
+    import contextlib
+    import shutil
+    import scraper_api_client as client
+    tmp = tempfile.mkdtemp(prefix="jj_client_")
+    saved_fetch, saved_argv = client.fetch_html, sys.argv[:]
+    try:
+        client.fetch_html = lambda args: (body, 200)
+        out = os.path.join(tmp, "run")
+        sys.argv = ["scraper_api_client.py", "--url", url, "--mode", mode,
+                    "--key", "not-a-real-key", "--out", out, "--format", fmt]
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = client.main()
+        meta_path = out + ".meta.json"
+        meta = (json.load(open(meta_path, encoding="utf-8"))
+                if os.path.exists(meta_path) else None)
+        files = sorted(os.listdir(tmp))
+        csv_head = None
+        if os.path.exists(out + ".csv"):
+            csv_head = open(out + ".csv", encoding="utf-8").readline().strip()
+        return code, meta, files, csv_head
+    finally:
+        client.fetch_html, sys.argv = saved_fetch, saved_argv
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def check_the_scraper_api_client_writes_a_sidecar():
+    code, meta, files, _ = _drive_client(
+        pp.api_url(items=7), "listings", LISTING_JSON)
+    equal("a listings run through the client exits 0", code, 0)
+    check("and leaves a sidecar beside it", meta is not None, str(files))
+    if meta is not None:
+        equal("status", meta["status"], "complete")
+        equal("mode", meta["mode"], "listings")
+        equal("it says it went through the Scraper API", meta.get("route"),
+              "scraper_api")
+        equal("and how many rows", meta["products"], 7)
+    # What a consumer can then DO with it.
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = [{"sku": "a", "title": "x", "data_source": "api"}]
+        a = _write_run(tmp, "a", rows, meta or _meta())
+        b = _write_run(tmp, "b", rows, meta or _meta())
+        code, _ = _diff(a, b)
+        equal("so diff_runs accepts a client run beside a client run", code, 0)
+
+
+def check_the_scraper_api_client_marks_a_facets_run_partial_and_writes_csv():
+    """One URL fetched, so the category counts — a second endpoint — are never
+    in the body. The run is partial by construction and must say so. Through
+    `save` it also wrote the CSV with the JobPosting header, which fails on
+    the first Facet row."""
+    code, meta, files, csv_head = _drive_client(
+        output_writer_facets_url(), "facets", FACETS_JSON, fmt="both")
+    equal("a facets run through the client is partial", code, 6)
+    check("a sidecar was written", meta is not None, str(files))
+    if meta is not None:
+        equal("status", meta["status"], "partial")
+        equal("it names the missing group", meta.get("missing_groups"),
+              ["categories"])
+        equal("and why it stopped", meta["stop_reason"],
+              "facet_groups_missing")
+    check("the CSV has the Facet header, not the JobPosting one",
+          csv_head and csv_head.startswith("source,scraped_at,url,sku,title,"
+                                           "facet_group"), str(csv_head))
+
+
+def output_writer_facets_url():
+    return pp.facets_api_url()
+
+
+# ---------------------------------------------------------------------------
+# Output writes are atomic
+# ---------------------------------------------------------------------------
+#
+# `open(path, "w")` truncates before a byte is written, so a crash halfway
+# through `json.dump` replaced last night's good file with a shorter one. The
+# sidecar is the part that matters most: it is the file a consumer branches on.
+
+def check_a_crash_during_a_write_leaves_the_previous_file_whole():
+    import output_writer as ow
+    with tempfile.TemporaryDirectory() as tmp:
+        good_rows = [ow.JobPosting(source="s", scraped_at="t", url="u",
+                                   sku="a")]
+        paths = {"json": os.path.join(tmp, "o.json"),
+                 "csv": os.path.join(tmp, "o.csv"),
+                 "meta": os.path.join(tmp, "o.meta.json")}
+        ow.write_json(good_rows, paths["json"])
+        ow.write_csv(good_rows, paths["csv"])
+        ow.write_run_meta(os.path.join(tmp, "o"), {"status": "complete"})
+        before = {k: open(p, "rb").read() for k, p in paths.items()}
+
+        class Unserialisable:
+            pass
+
+        def attempt(label, fn):
+            try:
+                fn()
+            except BaseException:
+                pass
+            else:
+                check("%s: the planted failure was raised" % label, False)
+
+        attempt("json", lambda: ow.write_json([object()], paths["json"]))
+        attempt("csv", lambda: ow.write_csv([object()], paths["csv"]))
+        attempt("meta", lambda: ow.write_run_meta(
+            os.path.join(tmp, "o"), {"status": Unserialisable()}))
+        for k, p in paths.items():
+            check("%s: the previous file is byte-identical after a failed "
+                  "write" % k, open(p, "rb").read() == before[k])
+        left = [n for n in os.listdir(tmp) if n.endswith(".tmp")]
+        check("and no temporary file is left behind", not left, str(left))
+
+
+def check_an_atomic_write_keeps_the_files_permissions():
+    """The temporary file is created 0600 and a rename keeps that. Measured in
+    the sibling repos that adopted this writer: every output came out
+    owner-only."""
+    import output_writer as ow
+    if not hasattr(os, "chmod") or os.name == "nt":
+        skip("permissions", "no POSIX modes here")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        row = [ow.JobPosting(source="s", scraped_at="t", url="u", sku="a")]
+        fresh = os.path.join(tmp, "fresh.json")
+        ow.write_json(row, fresh)
+        mask = os.umask(0)
+        os.umask(mask)
+        equal("a new file gets what open() would have given",
+              os.stat(fresh).st_mode & 0o777, 0o666 & ~mask)
+        kept = os.path.join(tmp, "kept.json")
+        ow.write_json(row, kept)
+        os.chmod(kept, 0o640)
+        ow.write_json(row, kept)
+        equal("an existing file keeps its own mode",
+              os.stat(kept).st_mode & 0o777, 0o640)
+
+
+def check_every_output_write_goes_through_the_atomic_helper():
+    import ast
+    import inspect
+    import output_writer as ow
+    for name in ("write_json", "write_csv", "write_run_meta"):
+        tree = ast.parse(inspect.getsource(getattr(ow, name)).lstrip())
+        opens = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", None) == "open"]
+        atomics = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                   and getattr(n.func, "id", None) == "_atomic"]
+        check("%s writes through _atomic" % name, bool(atomics))
+        check("and has no bare open()", not opens)
+    tree = ast.parse(inspect.getsource(ow._atomic).lstrip())
+    attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    check("the temp file is created in the target's own directory",
+          "dir" in {k.arg for n in ast.walk(tree) if isinstance(n, ast.Call)
+                    for k in n.keywords})
+    check("it is fsynced and renamed", {"fsync", "replace"} <= attrs)
+
+
+def check_the_csv_newline_survives_the_atomic_write():
+    """Without `newline=""` the csv module's own \\r\\n gains a second CR per
+    row on Windows. POSIX never translates, so no run here can show the fault;
+    this reads the two places that carry it instead of pretending to measure
+    it."""
+    import ast
+    import inspect
+    import output_writer as ow
+    tree = ast.parse(inspect.getsource(ow.write_csv).lstrip())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and getattr(n.func, "id", None) == "_atomic"]
+    kw = {k.arg: k.value for c in calls for k in c.keywords}
+    check("write_csv asks _atomic for newline=''",
+          isinstance(kw.get("newline"), ast.Constant)
+          and kw["newline"].value == "", repr(kw))
+    tree = ast.parse(inspect.getsource(ow._atomic).lstrip())
+    passed = [k for n in ast.walk(tree) if isinstance(n, ast.Call)
+              for k in n.keywords if k.arg == "newline"]
+    check("and _atomic hands it to the temporary file", bool(passed))
+
+
 def check_the_404_is_not_a_block():
     """An offer taken down between the sitemap and the fetch is ordinary."""
     equal("state", pp.detect_page_state(NOT_FOUND_JSON, 404,
@@ -1482,7 +2507,8 @@ def check_policy_constants_have_a_consumer():
                "should_retry", "should_solve", "counts_as_blocked",
                "should_parse", "concurrency_limit", "concurrency_for_mode",
                "pagination_is_addressable", "plan_page_urls",
-               "enumerate_offers", "needs_readiness_wait", "is_terminal"):
+               "enumerate_offers", "needs_readiness_wait", "queue_decision",
+               "pages_are_independent"):
         check("page_flow.%s has a caller outside its own module" % fn,
               fn in joined, "unused policy")
 
@@ -1493,7 +2519,8 @@ def check_policy_constants_have_a_consumer():
     # whether ANYTHING reads them, and the answer has to come from the
     # module's own source rather than from the engines'.
     own = open(os.path.join(HERE, "page_flow.py"), encoding="utf-8").read()
-    for fn in ("pages_to_plan", "max_offset_for", "mask_secrets"):
+    for fn in ("pages_to_plan", "max_offset_for", "mask_secrets",
+               "is_terminal"):
         calls = own.count(fn + "(")
         check("page_flow.%s is called, not merely defined" % fn,
               calls >= 2, "%d occurrence(s) — only its own def" % calls)
@@ -1902,11 +2929,15 @@ def check_banned_and_removed_flags():
         check("%s refuses a --url whose route disagrees with --mode" % module,
               "but --mode is" in source,
               "the refusal that makes --mode safe here is missing")
-        check("%s refuses a filter outside --mode listings" % module,
-              "does \n                    \"not read. Use --mode listings to filter" in source
-              or "not read. Use --mode listings to filter" in source,
-              "the refusal that keeps a filter from looking applied when it "
-              "is not is missing")
+        # The refusal itself now lives in ONE place — product_parser.args_problem
+        # — so the question per engine is whether it is CALLED, and from
+        # parse_args rather than from somewhere a run does not reach.
+        check("%s asks product_parser.args_problem" % module,
+              "args_problem(args)" in source,
+              "the shared refusal exists and this engine does not call it")
+        check("%s turns its answer into a usage error (exit 2)" % module,
+              "p.error(problem)" in source,
+              "the refusal would be computed and then ignored")
 
 
 def check_undefined_names_in_every_module():

@@ -58,8 +58,8 @@ import requests
 from product_parser import (BOT_CHALLENGE_MARKERS, MODES, DEFAULT_MODE,
                             detect_bot_challenge, detect_page_state,
                             parse_page, parse_detail_response,
-                            ROUTES, DEFAULT_ROUTE)
-from output_writer import save
+                            ROUTES, DEFAULT_ROUTE, missing_facet_groups)
+from output_writer import SOURCE_DEFAULT, finish_run
 import env_config
 import page_flow
 
@@ -354,7 +354,31 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
                        "you can see what actually came back.", dump)
         return 4
 
-    return save(products, args.out, args.format, allow_empty=args.allow_empty)
+    # `finish_run`, not `save`: it picks the row class from the MODE (this
+    # client wrote a --mode facets CSV with the JobPosting header, which fails
+    # on the first Facet row) and it writes the `<out>.meta.json` sidecar. With
+    # no sidecar a run said nothing about its mode, its route or whether it
+    # was complete, which is exactly the evidence `diff_runs.py` needs and
+    # used to wave through when it was absent.
+    stop_reason = "single_page_route"
+    extra = {"route": "scraper_api", "mode": args.mode}
+    if args.mode == "facets":
+        # One request, so the category counts (their own endpoint) are never
+        # part of this body: the run is partial by construction, and says so.
+        missing = missing_facet_groups(products)
+        if missing:
+            stop_reason = "facet_groups_missing"
+            extra["missing_groups"] = missing
+            logger.warning("The facet response is missing %s — the Scraper "
+                           "API client fetches one URL, and the categories "
+                           "are a second endpoint. Use a browser engine for "
+                           "the full set; this run is written as partial.",
+                           ", ".join(missing))
+    return finish_run(products, args.out, args.format, args.allow_empty,
+                      blocked=False, stop_reason=stop_reason,
+                      pages_requested=1, pages_completed=1, mode=args.mode,
+                      source=SOURCE_DEFAULT, start_url=args.url,
+                      final_url=args.url, extra=extra)
 
 
 def parse_args():
