@@ -52,7 +52,7 @@ the result set is capped, `--sort publishedAt` and `--sort salary` return
 different SAMPLES of the same board: measured 2026-09-18, the first 100 ids
 under the two orderings overlapped on 5. So two runs that disagree on
 `sort` or on their filters are refused outright rather than diffed — every
-line of that diff would be an artefact of the query (CLAUDE.md §21).
+line of that diff would be an artefact of the query.
 
 **`position` and `page` are deliberately not tracked.** justjoin.it's order
 was measured STABLE on 2026-09-18: two fetches 25 seconds apart returned
@@ -91,7 +91,7 @@ from output_writer import UNIQUE_BY_SKU_MODES
 # reports success. `smoke_test.py` pins every name against the dataclass.
 #
 # A shop's fields are absent because a job offer has no stock or discount —
-# porting them would be dead code that looks load-bearing (CLAUDE.md §4).
+# porting them would be dead code that looks load-bearing.
 # What changes on a justjoin.it offer is its PAY, its SENIORITY, its
 # SKILLS, where it can be done from and how you apply to it.
 #
@@ -146,6 +146,34 @@ TRACKED_FIELDS = (
     "expires_at",
 )
 
+# What is worth watching on a `--mode facets` row: the board's own count
+# per filter key. The JobPosting tuple above names none of these, so a
+# facets diff used to compare nothing and report "0 changed" while a key
+# went from 100 offers to 250.
+#
+# DELIBERATELY NOT TRACKED: `site_total`, the whole board's count. It is
+# the same figure on every row of a run, so a change in it would be
+# reported once per key and say nothing about any of them.
+FACET_TRACKED_FIELDS = (
+    "title",
+    "offer_count",
+    "is_cumulative",
+    "overlaps_other_keys",
+)
+
+
+def tracked_fields_for(mode: Optional[str], rows: List[dict]) -> Tuple[str, ...]:
+    """The fields to compare for a run of `mode`.
+
+    The mode comes from the sidecar. Without one (--force on bare files) it
+    is read off the rows: a facets row carries `facet_group`.
+    """
+    if mode == "facets" or (mode is None and any("facet_group" in r
+                                                 for r in rows)):
+        return FACET_TRACKED_FIELDS
+    return TRACKED_FIELDS
+
+
 # The subset that only SOME of the three routes populate.
 #
 # This repo reads the same offer three ways and they publish different
@@ -169,7 +197,7 @@ TRACKED_FIELDS = (
 #                     that payload carries no normalisation.
 #
 # When two rows disagree on `data_source`, a difference on any of these is
-# reported as `source_changed` rather than as a change (§8: a difference
+# reported as `source_changed` rather than as a change (a difference
 # that comes with a provenance difference says something about our own two
 # snapshots, not about the site).
 #
@@ -211,7 +239,8 @@ def _by_sku(products: List[dict]) -> Tuple[Dict[str, dict], int]:
     return indexed, unmatchable
 
 
-def diff_products(old: List[dict], new: List[dict]) -> dict:
+def diff_products(old: List[dict], new: List[dict],
+                  tracked: Tuple[str, ...] = TRACKED_FIELDS) -> dict:
     old_by_sku, old_unmatchable = _by_sku(old)
     new_by_sku, new_unmatchable = _by_sku(new)
 
@@ -223,7 +252,7 @@ def diff_products(old: List[dict], new: List[dict]) -> dict:
         before, after = old_by_sku[sku], new_by_sku[sku]
         field_changes = {
             field: {"old": before.get(field), "new": after.get(field)}
-            for field in TRACKED_FIELDS
+            for field in tracked
             if before.get(field) != after.get(field)
         }
         if not field_changes:
@@ -379,7 +408,7 @@ def _check_comparable(args) -> bool:
     # under `sortBy=publishedAt` and under `sortBy=salary` returned first
     # pages whose 100 ids overlapped on FIVE. Diffing one against the other
     # would report ~95 added and ~95 removed, every line an artefact of the
-    # query rather than a fact about the board (CLAUDE.md §21).
+    # query rather than a fact about the board.
     #
     # The same argument applies to the FILTERS, and more obviously: a
     # `--category python` run and a `--category java` run are different
@@ -429,7 +458,7 @@ def _check_comparable(args) -> bool:
                   f"rather than that an offer was taken down. Use --pages "
                   f"{enumerated} on both runs to compare a full census.")
         if meta.get("capped_by_site"):
-            # CLAUDE.md §21: the third meaning of `removed`. A capped run
+            # The third meaning of `removed`. A capped run
             # holds a moving window over a board that is published to
             # continuously, so rows leave the window without anything
             # happening to the job.
@@ -489,7 +518,9 @@ def main() -> int:
         print(f"[!] Could not read one of the input files: {e}")
         return 2
 
-    result = diff_products(old, new)
+    _, meta = _run_status(args.new)
+    result = diff_products(old, new, tracked_fields_for(
+        (meta or {}).get("mode"), old + new))
     _print_summary(result)
 
     if args.out:

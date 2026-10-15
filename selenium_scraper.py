@@ -4,7 +4,7 @@ justjoin-scraper — Selenium edition (parity engine)
 Behaviour is identical to `playwright_scraper.py`: same flags, same modes,
 same exit codes, same output. Playwright is the primary engine; this one
 exists so the family's claim of three interchangeable engines is testable
-rather than asserted (CLAUDE.md §6).
+rather than asserted.
 
 Everything this file knows about justjoin.it it gets from
 `product_parser.py`, and every retry / solve / blocked decision from
@@ -138,7 +138,7 @@ class PageOutcome:
     # How many entries the same response's ItemList JSON-LD indexes. 326
     # against 390 records on 2026-09-18 — the gap is why the parser reads
     # the React Query cache, and recording it per run means nobody inherits
-    # the figure from a comment (§13).
+    # the figure from a comment.
     urls_in_itemlist: Optional[int] = None
     pages_available: Optional[int] = None
     # The page number the SERVER answered with, read back out of the Apollo
@@ -488,7 +488,7 @@ def _solve_budget(args, spent: int):
     page is classified and once after — and only the SECOND call was counted.
 
     INHERITED EVIDENCE, from a SIBLING repo and not from justjoin.it — labelled
-    because §13 says a number you inherited is not a number you measured,
+    because a number you inherited is not a number you measured,
     and this one cannot be reproduced here: justjoin.it has never rendered a
     challenge to this scraper, so no page of this site has ever bought a
     solve at all.
@@ -496,7 +496,7 @@ def _solve_budget(args, spent: int):
     On that sibling, from a datacenter address that meets a real Cloudflare
     challenge on every fetch (2026-09-17): ONE page bought THREE Turnstile
     solves, and every token was refused. The cap read as enforced and was
-    not (CLAUDE.md §17). Both call sites now go through here.
+    not. Both call sites now go through here.
 
     The fix is carried here anyway. A budget that is never exercised is
     still the difference between a bill and no bill on the day it is.
@@ -611,11 +611,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             state = page_flow.classify(html, http_status, d["current_url"](),
                                    args.mode, args.route)
 
-        # The paid path is reached only for state "challenge" — Cloudflare's
-        # Managed Challenge, which IS a test. It is NOT reached for
-        # "blocked": the hard "You have been blocked" page carries no widget
-        # and no sitekey, so a solve there would be a charge for nothing.
-        # Bounded by SOLVES_PER_PAGE. Mirrors playwright_scraper.
+        # The paid path is reached for any state page_flow.STATE_POLICY marks
+        # solvable — on this site that is `blocked`; there is no separate
+        # `challenge` state (see page_flow's docstring). Bounded by
+        # SOLVES_PER_PAGE so a rotation loop cannot become a bill, and a
+        # sitekey-less detection refuses to build a task at all rather than
+        # paying for one the API will reject.
         if (page_flow.should_solve(state)
                 and _solve_budget(args, solves_bought)):
             solves_bought += 1
@@ -660,7 +661,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 # unguarded while the Playwright engine guarded it, so any
                 # retryable state on a run with no proxy died with
                 # `AttributeError: 'NoneType' object has no attribute
-                # 'current'` instead of retrying (CLAUDE.md §16: copied core
+                # 'current'` instead of retrying (copied core
                 # is untested core).
                 pause = args.retry_delay * (block_attempt + 1)
                 logger.warning("Page %d came back as %s — re-fetching "
@@ -670,7 +671,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 time.sleep(pause)
 
     if load_failed:
-        # NAME the proxy when it was the proxy. CLAUDE.md §8: a dead exit and
+        # NAME the proxy when it was the proxy. A dead exit and
         # a timeout want opposite responses — another try at the same exit
         # versus a different exit — so a message that cannot tell them apart
         # leaves the reader guessing which they got.
@@ -928,7 +929,7 @@ def scrape(args) -> int:
             # The board-wide total, for the cap arithmetic. One extra
             # request, and it buys the difference between a sidecar that
             # says "complete" and one that says "complete, and a 52%
-            # sample" (CLAUDE.md §21). Never fatal.
+            # sample". Never fatal.
             if args.mode == "listings":
                 try:
                     site_total = parse_count_response(
@@ -1006,7 +1007,7 @@ def scrape(args) -> int:
 
     # Completeness, checked over the MERGED result rather than per page — a
     # per-page check cannot see a gap BETWEEN two pages, which is exactly
-    # where a short page hides (CLAUDE.md §8).
+    # where a short page hides.
     total_available = next((o.total_available for o in outcomes
                             if o.total_available is not None), None)
     pages_available = next((o.pages_available for o in outcomes
@@ -1016,10 +1017,10 @@ def scrape(args) -> int:
 
     if args.mode == "listings" and all_rows:
         if cap["capped_by_site"]:
-            # CLAUDE.md §21: "complete" and "exhaustive" are different
+            # "Complete" and "exhaustive" are different
             # words, and a run that says only "complete" is lying by
             # omission. Reported every run rather than inherited from a
-            # README measured on some other day (§13).
+            # README measured on some other day.
             logger.info("This query was CAPPED: justjoin.it reports at most "
                         "%s results for any one query, and this one hit that "
                         "ceiling. The board holds %s offer(s). Collected %d "
@@ -1073,7 +1074,7 @@ def scrape(args) -> int:
 
     # One-per-run context, in the sidecar rather than repeated down a
     # column. What goes here is this run's OWN arithmetic about how much of
-    # the board it covered — which is what a bare "complete" hides (§21),
+    # the board it covered — which is what a bare "complete" hides,
     # and what stops a reader of the file inheriting a number from a README
     # that was measured on some other day.
     extra = {"mode": args.mode, "route": args.route,
@@ -1090,7 +1091,7 @@ def scrape(args) -> int:
         # overlapped on 5 of 100 ids (measured 2026-09-18), because each is
         # a different slice of a capped result set. So it is recorded, and
         # `diff_runs.py` refuses to compare two runs that disagree on it
-        # (CLAUDE.md §21).
+        #.
         filters = filters_from_args(args).as_params()
         if filters:
             extra["filters"] = filters
@@ -1306,6 +1307,10 @@ def parse_args():
     p.add_argument("--headless", action="store_true", default=True)
     p.add_argument("--headful", dest="headless", action="store_false")
     args = p.parse_args()
+    # What the user TYPED, captured before the environment fills the gap:
+    # a JUSTJOIN_URL from .env is a default, not an instruction, and must
+    # not make `--mode offer` or `--mode facets` a usage error.
+    typed_url = args.url
     env_config.apply(args)
 
     # Spelled identically to the other two engines.
@@ -1319,10 +1324,15 @@ def parse_args():
         if not ok:
             p.error(why)
         implied = mode_for_url(args.url)
-        if implied and implied != args.mode:
+        if implied and implied != args.mode and not typed_url:
+            logger.info("JUSTJOIN_URL (%s) is a %s URL and --mode is %s; "
+                        "it is ignored and --mode %s uses its own default.",
+                        args.url, implied, args.mode, args.mode)
+            args.url = None
+        elif implied and implied != args.mode:
             # Refused rather than silently corrected: reading a careers URL
             # under --mode listings would parse it with the wrong reader and
-            # report zero rows for a perfectly good page (CLAUDE.md §20).
+            # report zero rows for a perfectly good page.
             p.error("--url is a %s URL but --mode is %s. %s is read by "
                     "--mode %s; pass that, or drop --url and let --mode %s "
                     "use its own default."

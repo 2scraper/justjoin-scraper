@@ -5,9 +5,9 @@
 #
 # Most canaries in this family skip when a proxy secret is absent, because
 # their site refuses a datacenter address and a GitHub runner is one — and a
-# check that is always red teaches everyone to ignore checks (CLAUDE.md §11).
+# check that is always red teaches everyone to ignore checks.
 #
-# justjoin.it is the other case, and CLAUDE.md §21 states the rule for it: a
+# justjoin.it is the other case, and the rule for it is: a
 # canary that CAN pass without a credential should never be gated on one.
 # Measured 2026-09-18 from a bare netcup datacentre address, with no key and
 # no proxy: the offers endpoint 200 with 100 offers, an offer's own record
@@ -23,9 +23,8 @@
 # limit, the badge goes red the next morning and the claim is retested
 # without anyone having to remember to.
 #
-# There is no secret anywhere in this file, which also means there is
-# nothing here that can rot: a Scraping Browser profile's credentials live
-# about a day, so a scheduled job holding one is stale between runs.
+# There is no secret anywhere in this file, so there is nothing here that
+# can expire between runs.
 
 name: canary
 
@@ -58,7 +57,7 @@ jobs:
 
       # THREE pages, not one. With one page pagination is never exercised,
       # which is exactly how a silent single-page bug survived in a sibling
-      # repo (CLAUDE.md §11). A filtered category is used rather than the
+      # repo. A filtered category is used rather than the
       # whole board so the result set is under the site's 10,000 cap and two
       # runs are comparable as a census.
       - name: Run --mode listings (3 pages, filtered)
@@ -204,7 +203,7 @@ jobs:
                    "a monthly figure came out below its hourly rate")
 
           # No row may carry a salary of zero: the site's own "Undisclosed
-          # Salary" must reach the output as null (CLAUDE.md §21).
+          # Salary" must reach the output as null.
           want("an undisclosed salary is null, never zero",
                not any(r.get("salary_min") == 0 or r.get("salary_max") == 0
                        for r in rows),
@@ -232,7 +231,7 @@ jobs:
                "an id came back in an unexpected shape")
           # page+position must be unique ACROSS pages — position restarts at
           # 1 on each, so without the page number beside it the column is
-          # worthless (CLAUDE.md §18).
+          # worthless.
           want("page+position unique",
                len({(r["page"], r["position"]) for r in rows}) == len(rows),
                "collisions — the page number is not reaching the parser")

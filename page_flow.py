@@ -2,7 +2,7 @@
 page_flow.py
 ------------
 The retry / solve / blocked decision, as DATA rather than as three copies of
-an if-chain (CLAUDE.md §1).
+an if-chain.
 
 justjoin.it answers a request six ways, and five of them want a different
 response:
@@ -30,7 +30,7 @@ Nothing here imports a browser, and **no JavaScript crosses this boundary**:
 Selenium's `execute_script` takes a function BODY with an explicit `return`
 while Playwright and pyppeteer take `() => expr`, so a shared snippet would
 quietly acquire one driver's dialect. The callbacks below are named for the
-OPERATION instead, and each engine spells it in its own dialect (§1).
+OPERATION instead, and each engine spells it in its own dialect.
 """
 
 import logging
@@ -54,7 +54,7 @@ log = logging.getLogger("page_flow")
 
 # How many offer links mean "this response is the board".
 #
-# `> 1` on purpose, per CLAUDE.md §5: waiting for ONE match resolves on
+# `> 1` on purpose: waiting for ONE match resolves on
 # something unrelated — a nav link, a footer — long before the grid is
 # really there.
 #
@@ -82,7 +82,7 @@ MIN_CARD_MATCHES = 4
 
 # Anchored on a URL pattern, never a CSS class: justjoin.it's classes are
 # build-generated (`mui-1vaayb6`) and churn on every deploy, while
-# `/job-offer/{slug}` is a contract with search engines (§4).
+# `/job-offer/{slug}` is a contract with search engines.
 #
 # One spelling is enough here, and that is worth stating because a sibling
 # repo needed two: that site rewrites every job anchor during hydration, so
@@ -120,7 +120,7 @@ def needs_readiness_wait(mode: str, route: str = DEFAULT_ROUTE) -> bool:
     complete when the navigation resolves, there is no grid to paint, and
     polling a selector against Chromium's JSON viewer would simply burn the
     full 45-second budget on every page before timing out. A readiness wait
-    that can never succeed is worse than none — CLAUDE.md §8 records what
+    that can never succeed is worse than none — a sibling repo recorded what
     that cost in a sibling repo, where it turned a background captcha into
     a paid solve on a page that already held every row.
     """
@@ -131,7 +131,7 @@ def needs_readiness_wait(mode: str, route: str = DEFAULT_ROUTE) -> bool:
 #
 # Polled through `count(selector)` — a callback each engine implements with
 # its own `querySelectorAll` call — and NEVER by handing the browser a
-# string to evaluate. CLAUDE.md §18: a site whose Content-Security-Policy
+# string to evaluate. A site whose Content-Security-Policy
 # omits `unsafe-eval` kills `wait_for_function` with an `EvalError` and
 # takes the run down with exit 1, on the site's most obvious URL.
 #
@@ -178,7 +178,7 @@ def classify(body: Optional[str], status: Optional[int] = None,
     `classify(html, url=...)` in two of three engines against a callee that
     took `status` second, and both crashed on their first fetch — invisible
     to import, `--help`, `compileall` and 400+ green offline assertions,
-    because none of those calls a function the way a live run does (§17).
+    because none of those calls a function the way a live run does.
     `smoke_test.py` binds every engine's call against this signature for
     exactly that reason.
     """
@@ -214,12 +214,12 @@ STATE_POLICY = {
     # identical impossible question again; reporting it as blocked would
     # send a reader after a proxy. The planner caps offsets so this should
     # be unreachable, and it is in the table because "unreachable" is a
-    # claim about today's code (CLAUDE.md §21).
+    # claim about today's code.
     "cap_exceeded": {"retry": False, "solve": False, "blocked": False, "parse": False},
     # A substantial body this parser could not read. NOT "zero offers": a
     # response the site plainly served that parses to nothing is OUR bug,
     # and reporting it as an empty board sends the reader to check their
-    # filters instead of the parser (CLAUDE.md §20). Worth one retry in
+    # filters instead of the parser. Worth one retry in
     # case a document was caught mid-swap, and always worth a dump.
     "parse_error":  {"retry": True,  "solve": False, "blocked": False, "parse": False},
     # Something that is neither the site nor a recognised refusal — an
@@ -255,7 +255,7 @@ def is_terminal(state: str) -> bool:
 # True, and CONSULTED rather than merely documented — the engines read it,
 # so setting it False really does stop the retry loop. (A sibling repo
 # carried this constant with a paragraph of justification and no reader,
-# which is the same defect as dead code that looks load-bearing: §17.)
+# which is the same defect as dead code that looks load-bearing.)
 #
 # True is the cautious setting rather than a measured one here, and the
 # honest statement of the evidence is that there is none: justjoin.it has
@@ -285,7 +285,7 @@ SOLVES_PER_PAGE = 1
 def pagination_is_addressable(url: str, route: str = DEFAULT_ROUTE) -> bool:
     """Whether page N of this run can be fetched without walking to it.
 
-    CLAUDE.md §18 says to ask this PER URL rather than per site, and on
+    Ask this PER URL rather than per site, and on
     justjoin.it the two listing routes give opposite answers:
 
       * the offers endpoint IS addressable. It paginates on a numeric
@@ -313,7 +313,7 @@ def pages_to_plan(pages_requested: int, pages_available: Optional[int]) -> int:
     """How many pages a run may ask for, given what the site will serve.
 
     justjoin.it states `meta.totalItems` on page 1, so unlike a site that
-    states nothing there is real arithmetic to do — and CLAUDE.md §7's
+    states nothing there is real arithmetic to do — and pagination's
     second layer says to use it. `pages_available` is computed from that
     total AND from the site's own 10,000 cap, because asking for the page
     after the cap is an HTTP 500 rather than an empty page.
@@ -334,7 +334,7 @@ def concurrency_limit(cdp_endpoint: Optional[str]) -> Optional[int]:
 
     The Scraping Browser API allows ONE live connection per profile, so N
     workers sharing a `pid` collide with `profile_locked`. Several `pid`s,
-    one run each, is the way to parallelise that path (§7).
+    one run each, is the way to parallelise that path.
     """
     return 1 if cdp_endpoint else None
 
@@ -349,8 +349,7 @@ def concurrency_for_mode(mode: str, concurrency: int,
     honest about what it did.
 
     `listings --route api` and `offer` both address every page
-    independently and may use every worker they are given — with CLAUDE.md
-    §7's warning attached, that concurrency without a proxy pool is a
+    independently and may use every worker they are given — with the warning attached, that concurrency without a proxy pool is a
     faster way to get an address scored than to gather data.
     """
     if mode == "facets":
@@ -377,7 +376,7 @@ _CREDENTIALS_IN_URL_RE = re.compile(
 def mask_secrets(text: str) -> str:
     """Credentials out of an exception message before it reaches a log.
 
-    CLAUDE.md §8: an EXCEPTION MESSAGE is a log. A driver that fails while
+    An EXCEPTION MESSAGE is a log. A driver that fails while
     connecting through an authenticated proxy puts the whole URL into the
     text of the error, credentials included — so anything this module
     prints from an exception goes through here first. Host and port are
@@ -394,7 +393,7 @@ def plan_page_urls(args, page_one_url: str,
                     offer_slugs: Optional[List[str]] = None) -> List[str]:
     """URLs for pages 2..N, decided once before any of them is fetched.
 
-    CLAUDE.md §7 says to plan page URLs up front but to VERIFY first, and
+    Plan page URLs up front, but VERIFY first, and
     on justjoin.it the three routes give three different answers:
 
       * `--mode listings --route api` IS addressable. The endpoint
@@ -463,7 +462,7 @@ def plan_page_urls(args, page_one_url: str,
             # Past the 10,000 ceiling. Stopping here is the whole point:
             # the next address would answer HTTP 500, an error that reads
             # like a bug in this scraper rather than like the site refusing
-            # an impossible request (CLAUDE.md §21).
+            # an impossible request.
             log.info("Stopping the plan at page %d: offset %d is at "
                         "justjoin.it's own 10,000 ceiling, and asking past "
                         "it is an HTTP 500 rather than an empty page.",

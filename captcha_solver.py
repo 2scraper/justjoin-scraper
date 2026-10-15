@@ -21,7 +21,7 @@ and the site's own 404 — and every one was zero. Identical 200s came back
 from `curl` with no headers at all, from `python-requests` and from `wget`.
 No challenge has ever been rendered to this scraper.
 
-But "no challenge rendered" is NOT "no captcha configured" (CLAUDE.md §18),
+But "no challenge rendered" is NOT "no captcha configured",
 and this site has one:
 
   * **justjoin.it runs Google reCAPTCHA v2, on its APPLICATION FORM.** It
@@ -52,7 +52,7 @@ and this site has one:
     This is the INVERSE of the shape a sibling repo found, and both are
     worth carrying. There, the sitekey appeared in no served HTML and only
     a live browser revealed it. Here it is in every served page and a live
-    browser reveals nothing. So §18's "grep a good page for the site's own
+    browser reveals nothing. So the "grep a good page for the site's own
     captcha config" works on this site — and a reader who stopped at the
     grep would wrongly conclude a widget is waiting on the listing.
     `product_parser.site_recaptcha_sitekey` reads that key, and this
@@ -77,8 +77,7 @@ be solved". 2captcha solves ordinary reCAPTCHA v2
 configures — as well as enterprise reCAPTCHA
 (`RecaptchaV2EnterpriseTaskProxyless`), v3 and Cloudflare Turnstile
 (`TurnstileTaskProxyless`), and this module builds all of them. The only
-sentence this repo is entitled to is which task types it implements
-(CLAUDE.md §19).
+sentence this repo is entitled to is which task types it implements.
 
 PROVENANCE OF THE FIGURES BELOW
 -------------------------------

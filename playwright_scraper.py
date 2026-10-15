@@ -35,7 +35,7 @@ What is different about justjoin.it
   names.** `api.justjoin.it` — the host the site's own `baseApiUrl` points
   at — answered HTTP 503 from nginx to every request tried. The route that
   works is the same-origin proxy at `justjoin.it/api/candidate-api/`, which
-  is what this engine uses. Gating is per-ROUTE, not per-site (§21).
+  is what this engine uses. Gating is per-ROUTE, not per-site.
 
 * **`?page=2` on a rendered listing silently returns page 1.** Not an
   error, not an empty page: HTTP 200, `meta.from` still 0, a
@@ -182,12 +182,12 @@ class PageOutcome:
     # `urls_in_itemlist` is how many offer URLs a rendered page's own
     # `CollectionPage` JSON-LD names, which is only meaningful on
     # `--route ssr`. Carrying both means every run records the two views
-    # rather than a reader inheriting a figure from a comment (§13).
+    # rather than a reader inheriting a figure from a comment.
     total_available: Optional[int] = None
     # What the BOARD holds, against what this query can reach. justjoin.it
     # caps every query at 10,000 however many it matched, so these two are
     # different numbers and keeping only the first would let a run report
-    # "complete" while holding half the board (CLAUDE.md §21).
+    # "complete" while holding half the board.
     site_total: Optional[int] = None
     # The `meta.from` the server echoed. The endpoint states the offset it
     # actually served, so a page that came back as a repeat of an earlier
@@ -291,7 +291,7 @@ def _driver(page):
     # stating twice: measured 2026-09-18, `a[href*="/job-offer/"]` was 200
     # in the served markup and 18 in the live DOM after hydration. So
     # scrolling would REPLACE DOM nodes rather than add rows, and no row is
-    # read from the DOM anyway (CLAUDE.md §4).
+    # read from the DOM anyway.
     return {
         "count": lambda selector: len(page.query_selector_all(selector)),
         "sleep": page.wait_for_timeout,
@@ -387,7 +387,7 @@ def _fetch_body(session, args, url: str) -> str:
 # timeout, and the two want opposite responses: a timeout deserves another
 # try at the same exit, a dead proxy deserves a different one. Catching
 # only the timeout type let this escape as a traceback in a sibling repo
-# (CLAUDE.md §8).
+#.
 _PROXY_ERROR_MARKERS = (
     "ERR_PROXY_CONNECTION_FAILED",     # nothing listening / refused
     "ERR_TUNNEL_CONNECTION_FAILED",    # CONNECT rejected by the proxy
@@ -460,7 +460,7 @@ def _launch_local(pw, args, pool):
     # and keeps nothing, so `sitekey`, `action`, `cData` and `chlPageData`
     # exist only inside that call. A static read of a challenge page — any
     # static read, however careful — cannot produce a solvable task
-    # (CLAUDE.md §19). It costs nothing on a page that never renders one.
+    #. It costs nothing on a page that never renders one.
     context.add_init_script(TURNSTILE_INTERCEPT_JS)
     return browser, context, context.new_page()
 
@@ -685,7 +685,7 @@ def handle_captcha_if_present(page, args) -> bool:
     about the variant and the parameters for one are rejected for the other.
 
     WHAT THIS SITE ACTUALLY PUTS IN FRONT OF A RUN, measured 2026-09-18,
-    because CLAUDE.md §19 is explicit that a sentence about what a solver
+    because a sentence about what a solver
     can do is the most expensive thing this family can get wrong:
 
     * Cloudflare's **managed challenge**. justjoin.it sits behind
@@ -712,7 +712,7 @@ def handle_captcha_if_present(page, args) -> bool:
       guards submitting an application — sending a CV — which this scraper
       never does.
 
-      That was measured rather than reasoned, because CLAUDE.md §18 is
+      That was measured rather than reasoned, because it is
       explicit that a configured captcha and a rendered one are different
       questions. In a live headless Chromium on 2026-09-18, seven seconds
       after load, on a rendered listing, on an offer page and on the
@@ -730,7 +730,7 @@ def handle_captcha_if_present(page, args) -> bool:
       is why a grep of a capture finds one and a browser finds none.
 
     Neither is "unsolvable" — that word belongs to a PAGE with no widget
-    on it, not to a vendor (CLAUDE.md §19). If justjoin.it ever puts its v2
+    on it, not to a vendor. If justjoin.it ever puts its v2
     widget in front of a listing, 2Captcha solves exactly that with
     `RecaptchaV2TaskProxyless`, and the sitekey is published in the page
     source where this code already looks for it. What is true today is
@@ -791,7 +791,7 @@ def handle_captcha_if_present(page, args) -> bool:
         # the served markup — a threshold of 100 would report "no content"
         # a few seconds after load on a perfectly good page.
         #
-        # CLAUDE.md §18 states the rule for the PARSER's marker set; this
+        # The marker rule is stated for the PARSER's marker set; this
         # is the same rule applied to the SOLVER's gate — and the reminder
         # that a gate is only as good as the selector it counts with.
         if challenge is None and already_rendered <= MIN_CARD_MATCHES:
@@ -813,7 +813,7 @@ def handle_captcha_if_present(page, args) -> bool:
                             "publishes one in its own config — using it.")
             else:
                 # Raising a task without a sitekey buys a rejected token and
-                # an ERROR_CAPTCHA_UNSOLVABLE bill (CLAUDE.md §19). Say so
+                # an ERROR_CAPTCHA_UNSOLVABLE bill. Say so
                 # instead.
                 logger.warning(
                     "A Cloudflare Turnstile is on this page but no sitekey "
@@ -886,7 +886,7 @@ def _solve_budget(args, spent: int):
     gated — and only the SECOND call was counted.
 
     INHERITED EVIDENCE, from a SIBLING repo and not from justjoin.it —
-    labelled because §13 says a number you inherited is not a number you
+    labelled because a number you inherited is not a number you
     measured, and this one cannot be reproduced here: justjoin.it has never
     rendered a challenge to this scraper, so no page of this site has ever
     bought a solve at all.
@@ -895,7 +895,7 @@ def _solve_budget(args, spent: int):
     challenge on every fetch (2026-09-17): ONE page bought THREE Turnstile
     solves — two from the uncounted call across two block attempts, one
     from the counted one — and every token was refused. The cap read as
-    enforced and was not (CLAUDE.md §17: a policy constant nothing reads is
+    enforced and was not (a policy constant nothing reads is
     the same defect as dead code).
 
     The fix is carried here anyway. A budget that is never exercised is
@@ -1049,12 +1049,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             state = _classify(session.page, body, http_status, args.mode,
                           args.route)
 
-        # The paid path is reached only for state "challenge" — Cloudflare's
-        # managed challenge, which IS a test and can be solved once
-        # `TURNSTILE_INTERCEPT_JS` has captured its parameters. It is bounded
-        # by SOLVES_PER_PAGE so a rotation loop cannot become a bill, and a
+        # The paid path is reached for any state page_flow.STATE_POLICY marks
+        # solvable — on this site that is `blocked`; there is no separate
+        # `challenge` state (see page_flow's docstring). Bounded by
+        # SOLVES_PER_PAGE so a rotation loop cannot become a bill, and a
         # sitekey-less detection refuses to build a task at all rather than
-        # paying for one the API will reject (CLAUDE.md §19).
+        # paying for one the API will reject.
         if (page_flow.should_solve(state)
                 and _solve_budget(args, solves_bought)):
             solves_bought += 1
@@ -1112,7 +1112,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 time.sleep(pause)
 
     if load_failed:
-        # NAME the proxy when it was the proxy. CLAUDE.md §8: a dead exit and
+        # NAME the proxy when it was the proxy. A dead exit and
         # a timeout want opposite responses — another try at the same exit
         # versus a different exit — so a message that cannot tell them apart
         # leaves the reader guessing which they got.
@@ -1183,7 +1183,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # endpoint answers with the whole payload, and a rendered listing
     # server-renders all 100 offers into its flight payload. Porting the
     # sibling repos' scroll loop here would be dead code that looks
-    # load-bearing (CLAUDE.md §4) — and worse than usual on this site,
+    # load-bearing — and worse than usual on this site,
     # because the grid is virtualised: scrolling REPLACES DOM nodes, and no
     # row is read from the DOM in the first place.
 
@@ -1263,7 +1263,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             # offers on it and publishes not one fact about any of them —
             # no title, no company, no salary, no id. Reported so the two
             # views are compared every run rather than a reader inheriting
-            # the figure from a comment (§13): the flight payload should
+            # the figure from a comment: the flight payload should
             # hold at least as many records as the JSON-LD names URLs, and
             # an inversion would mean the primary source had started
             # dropping rows.
@@ -1487,7 +1487,7 @@ def scrape(args) -> int:
     # reporting path would lose a run that had already done all its work.
     total_enumerated = 0
     # What the board says it holds, against what this query can reach. Both
-    # are read from the run rather than inherited from a comment (§13).
+    # are read from the run rather than inherited from a comment.
     site_total: Optional[int] = None
 
     pool = proxy_pool_from_args(args)
@@ -1555,7 +1555,7 @@ def scrape(args) -> int:
                 if not offer_slugs:
                     # Nothing to fetch, so nothing is written — `save`
                     # leaves the previous run's good output in place and
-                    # no sidecar contradicts it (CLAUDE.md §9).
+                    # no sidecar contradicts it.
                     return finish_run(
                         [], args.out, args.format, args.allow_empty,
                         blocked=False, stop_reason="enumeration_empty",
@@ -1575,7 +1575,7 @@ def scrape(args) -> int:
             # The board-wide total, for the cap arithmetic. One extra
             # request, and it buys the difference between a sidecar that
             # says "complete" and one that says "complete, and a 52%
-            # sample" (CLAUDE.md §21). Never fatal: a run without it is
+            # sample". Never fatal: a run without it is
             # still a good run, it just cannot state the share.
             if args.mode == "listings":
                 try:
@@ -1690,7 +1690,7 @@ def scrape(args) -> int:
                         # nothing further to fetch, and this is the honest
                         # terminating condition: a property of the DATA, not
                         # of a CSS selector that may have been renamed
-                        # (CLAUDE.md §7).
+                        #.
                         if not fresh_count:
                             logger.info("Page %d added no rows not already seen "
                                         "— treating that as the end of the "
@@ -1729,7 +1729,7 @@ def scrape(args) -> int:
 
     # Completeness, checked over the MERGED result rather than per page — a
     # per-page check cannot see a gap BETWEEN two pages, which is exactly
-    # where a short page hides (CLAUDE.md §8).
+    # where a short page hides.
     total_available = next((o.total_available for o in outcomes
                             if o.total_available is not None), None)
     pages_available = next((o.pages_available for o in outcomes
@@ -1739,10 +1739,10 @@ def scrape(args) -> int:
 
     if args.mode == "listings" and all_rows:
         if cap["capped_by_site"]:
-            # CLAUDE.md §21: "complete" and "exhaustive" are different
+            # "Complete" and "exhaustive" are different
             # words, and a run that says only "complete" is lying by
             # omission. Reported every run rather than inherited from a
-            # README measured on some other day (§13).
+            # README measured on some other day.
             logger.info("This query was CAPPED: justjoin.it reports at most "
                         "%s results for any one query, and this one hit that "
                         "ceiling. The board holds %s offer(s). Collected %d "
@@ -1796,7 +1796,7 @@ def scrape(args) -> int:
 
     # One-per-run context, in the sidecar rather than repeated down a
     # column. What goes here is this run's OWN arithmetic about how much of
-    # the board it covered — which is what a bare "complete" hides (§21),
+    # the board it covered — which is what a bare "complete" hides,
     # and what stops a reader of the file inheriting a number from a README
     # that was measured on some other day.
     extra = {"mode": args.mode, "route": args.route,
@@ -1813,7 +1813,7 @@ def scrape(args) -> int:
         # overlapped on 5 of 100 ids (measured 2026-09-18), because each is
         # a different slice of a capped result set. So it is recorded, and
         # `diff_runs.py` refuses to compare two runs that disagree on it
-        # (CLAUDE.md §21).
+        #.
         filters = filters_from_args(args).as_params()
         if filters:
             extra["filters"] = filters
@@ -2061,12 +2061,16 @@ def parse_args():
     p.add_argument("--dump-html", default=None, metavar="PATH",
                    help="Save the exact HTML the parser is given, on success as "
                         "well as failure. Useful when the row count is right but "
-                        "a column comes back empty — see TROUBLESHOOTING.md.")
+                        "a column comes back empty — see the README section on traps that look like bugs.")
     p.add_argument("--headless", action="store_true", default=True)
     p.add_argument("--headful", dest="headless", action="store_false")
     args = p.parse_args()
     # Fill --twocaptcha-key / --cdp-endpoint / --proxy / --url from the
     # environment or .env when the flag was not given. An explicit flag wins.
+    # What the user TYPED, captured before the environment fills the gap:
+    # a JUSTJOIN_URL from .env is a default, not an instruction, and must
+    # not make `--mode offer` or `--mode facets` a usage error.
+    typed_url = args.url
     env_config.apply(args)
 
     # Every mode has a correct default URL, so `--url` is optional
@@ -2076,17 +2080,22 @@ def parse_args():
     # A listing URL and the filter flags do NOT conflict: a browsable
     # address is read back into the same filters the site's own front end
     # would send for it, and an explicit flag wins over anything read off
-    # the URL (CLAUDE.md §3's precedence rule, applied to filters).
+    # the URL (the precedence rule, applied to filters).
     if args.url:
         ok, why = is_supported_url(args.url)
         if not ok:
             p.error(why)
         implied = mode_for_url(args.url)
-        if implied and implied != args.mode:
+        if implied and implied != args.mode and not typed_url:
+            logger.info("JUSTJOIN_URL (%s) is a %s URL and --mode is %s; "
+                        "it is ignored and --mode %s uses its own default.",
+                        args.url, implied, args.mode, args.mode)
+            args.url = None
+        elif implied and implied != args.mode:
             # Refused rather than silently corrected. Reading an offer URL
             # under --mode listings would parse it with the wrong reader
             # and report zero rows for a perfectly good response — the
-            # failure CLAUDE.md §20 describes, where a served page that
+            # failure where a served page that
             # parses to nothing sends the reader to check the URL instead
             # of the code.
             p.error("--url is a %s URL but --mode is %s. %s is read by "

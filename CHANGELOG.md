@@ -11,7 +11,47 @@ burying it.
 
 ## [Unreleased]
 
+> **Behaviour changes.** CSV output now prefixes a cell that starts with
+> `=`, `+`, `-`, `@`, a tab, CR or LF with an apostrophe (JSON is
+> unchanged), and the sidecar gains `csv_cells_escaped`. `.env.example`
+> no longer sets `JUSTJOIN_URL`; a `JUSTJOIN_URL` from the environment that
+> names a different mode than `--mode` is now ignored with a log line
+> instead of exiting 2.
+
 ### Fixed
+
+- **CSV cells are formula-escaped.** Every string in a row is written by an
+  employer, and a spreadsheet runs a cell starting with `=`, `+`, `-` or
+  `@` as a formula. Escaped in the CSV only, after list cells are joined;
+  numbers stay numbers and JSON keeps the site's bytes. The count goes in
+  the sidecar as `csv_cells_escaped`, under any caller-provided field of
+  the same name.
+- **`JUSTJOIN_URL` no longer breaks `--mode offer` and `--mode facets`.**
+  The listings URL that `.env.example` shipped was read as if `--url` had
+  been typed, so a copied example made both modes exit 2. The engines now
+  record what was typed before reading the environment; only a typed URL is
+  checked against `--mode`. The example now shows the variable commented
+  out.
+- **`diff_runs.py` sees changes in a facets run.** It compared the job
+  columns on facet rows, which have none of them, so an `offer_count`
+  going from 100 to 250 reported "0 changed". Facets runs are now compared
+  on `title`, `offer_count`, `is_cumulative` and `overlaps_other_keys`.
+- **The credential scan works from any parent directory.** Its skip list
+  was matched against the absolute path, so a clone under a directory
+  named `build`, `env` or `venv` scanned 0 files and reported clean. It now
+  matches the path inside the repo, and the suite runs the scan from such a
+  copy with a planted key.
+- `--dump-html` help pointed at a `TROUBLESHOOTING.md` this repo does not
+  have; it now points at the README section on traps that look like bugs.
+- Engine comments said the paid captcha path runs only for a `challenge`
+  state that does not exist here; they now describe what
+  `page_flow.STATE_POLICY` does.
+- `.gitignore` covers `--dump-html` page files of any extension
+  (`*.page[0-9]*`), a `live/` scratch directory and HTML dumps at the root.
+- CI tests Python 3.13, which the README badge already claimed.
+- Comments, docstrings and changelog entries no longer cite internal notes
+  that are not public; each rule is stated in place. A suite check keeps it
+  that way.
 
 - **Scraper API: `waitFor` is now sent as a JSON object.** Measured
   2026-09-23 against `scraper.2captcha.com/tasks/sync`: the JSON-encoded
@@ -63,7 +103,7 @@ reading.
   "Parsed 0 job(s)" and exit 4 — "the query matched nothing". Measured: the
   Scraper API rendering justjoin.it's 1.8 MB listing page returned upstream
   HTTP 500 with **zero bytes**, and that path called it an empty result. It
-  now names the state, saves the body and exits 5. CLAUDE.md §8: blocked,
+  now names the state, saves the body and exits 5. Blocked,
   empty and failed are three different answers.
 
 - **A latent `NameError` in the same client** — `EXIT_NO_PRODUCTS` was used
@@ -89,8 +129,8 @@ reading.
   The opposite of what was written: point it at the endpoint.
 
 - **An inherited figure replaced with a measured one.** A comment repeated
-  CLAUDE.md's "17 of 18 repos" for the fingerprint flags. Re-counted across
-  the 26 sibling repos: 25 of 26, with the command beside it (§13).
+  an inherited "17 of 18 repos" for the fingerprint flags. Re-counted across
+  the 26 sibling repos: 25 of 26, with the command beside it.
 
 ### Removed
 
@@ -98,12 +138,12 @@ reading.
   read. A sweep for public names with no consumer now finds exactly two,
   both in the shared captcha client and both dead in every sibling repo
   checked — those are pinned by a check rather than removed, so the list
-  cannot grow silently (§17).
+  cannot grow silently.
 
 ### Verified live, against a real 2Captcha key
 
-- **`--fingerprint` applies what it fetches.** CLAUDE.md §16 lists four
-  defects that shipped on this path in four repos at once; none is present
+- **`--fingerprint` applies what it fetches.** Four
+  defects shipped on this path in four repos at once; none is present
   here. A PL fingerprint reached the browser intact: user agent
   `Windows NT 10.0 … Chrome/151`, locale `pl-PL` (not `en-PL`), timezone
   `Europe/Warsaw`, and `--fp-tags Windows` is accepted by the API.
@@ -237,7 +277,7 @@ Browser API over CDP.
 ### Fixed in the family core
 
 Both were inherited from the repo this one was ported from, and both are
-the shape CLAUDE.md §16 describes — copied code with no evidence behind it.
+the same shape — copied code with no evidence behind it.
 
 - **The two parity engines crashed instead of retrying when no proxy pool
   was configured.** `mask(pool.current)` was called unguarded in the

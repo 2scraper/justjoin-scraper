@@ -3,7 +3,7 @@
 Everything this project knows about Just Join IT lives here. The engines
 know how to drive a browser and nothing about job offers; `output_writer`
 knows the row schema and nothing about where a field came from. If you are
-editing site knowledge anywhere else, it belongs in this file (CLAUDE.md §1).
+editing site knowledge anywhere else, it belongs in this file.
 
 WHAT THIS SITE SERVES
 ---------------------
@@ -15,7 +15,7 @@ it publishes the SAME offer records three different ways. Measured
      the one its front end calls for every page after the first. HTTP 200
      with NO headers, NO cookies and NO key, 100 complete records in 253 KB.
      Offset pagination (`from`/`itemsCount`), so pages are addressable and
-     `--concurrency` is meaningful (CLAUDE.md §7).
+     `--concurrency` is meaningful.
 
   2. The rendered listing page — `/job-offers/all-locations` and friends.
      Server-renders the first 100 offers into the React Server Component
@@ -31,7 +31,7 @@ There is a fourth host, `api.justjoin.it`, which the page config names as
 request** from this address — bare, with browser headers, with the
 `x-api-version` header its own bundle sends, and on every path tried. The
 `/api/candidate-api/` prefix on the main host is a same-origin proxy in
-front of it, and that proxy is what works. This is CLAUDE.md §21's lesson
+front of it, and that proxy is what works. This is the lesson
 stated as code: gating is per-ROUTE, not per-site, and the route the front
 end actually calls is the one to ask for.
 
@@ -92,7 +92,7 @@ Both columns matter, and they break differently:
     disclose a salary whose `original` is not at index 0 — 40% — and one
     of them reads 39.15 CHF where the employer offers 180 PLN.
 
-This is CLAUDE.md §4's "structured data is a fact" rule: `currencySource`
+This is the "structured data is a fact" rule: `currencySource`
 is the site telling you which number is real, so select on it and never on
 position. The all-null conversion entries that lead an undisclosed row are
 also why the selection cannot be "the first entry with a number in it" —
@@ -110,7 +110,7 @@ Three more measured facts about that list:
     here, or a consumer grouping by unit gets two buckets for one unit.
   * 461 of 1000 rows disclose no salary at all — `from`/`to` are null on
     the `original` entry. Those stay null. They are NOT zero: a zero would
-    drag every average a reader computes (CLAUDE.md §21).
+    drag every average a reader computes.
 
 WHAT THE SITE CAPS
 ------------------
@@ -132,7 +132,7 @@ this repo — served listing pages, offer pages, endpoint responses — the
 count of every other vendor marker was zero.
 
 This is a statement about what was MEASURED, not about what 2Captcha can
-solve (CLAUDE.md §19). Should this site ever put a reCAPTCHA v2 in front of
+solve. Should this site ever put a reCAPTCHA v2 in front of
 a listing, `captcha_solver.py` solves exactly that with
 `RecaptchaV2TaskProxyless`, and the sitekey is published in the page source.
 """
@@ -159,7 +159,7 @@ WWW_HOST = "www." + HOST
 
 # Both answer. `www.` 301s to the bare host for HTML and for the endpoint
 # alike, so a URL rebuilt with either prefix reaches the same page — unlike
-# mediamarkt, where two hosts of ten refuse `www.` outright (CLAUDE.md §5).
+# mediamarkt, where two hosts of ten refuse `www.` outright.
 HOSTS = (HOST, WWW_HOST)
 
 # The host the site's own config calls `baseApiUrl`. Named here ONLY so
@@ -219,7 +219,7 @@ ROBOTS_NOTE = ("justjoin.it's robots.txt disallows /api/, which is where "
 # Every value below was checked against the live endpoint on 2026-09-18 by
 # asking for it and comparing `meta.totalItems` against the unfiltered
 # 10,000. A parameter that answered 10,000 with an identical first row is
-# NOT a filter, whatever its name suggests — CLAUDE.md §21 found the same
+# NOT a filter, whatever its name suggests — the same was found
 # thing on BBB, where `showOnlyAccredited` does nothing at all.
 #
 # These filter:                  measured totalItems
@@ -284,7 +284,7 @@ DEFAULT_ITEMS_COUNT = 100
 
 # `from=10000` and `from=10100` are both HTTP 500 — walking off the end
 # manufactures an error that reads like a bug in this scraper. Plan against
-# the cap instead (CLAUDE.md §21).
+# the cap instead.
 MAX_FROM = 10_000
 
 # ---------------------------------------------------------------------------
@@ -305,7 +305,7 @@ MAX_FROM = 10_000
 # library sends if you do not set one. Nothing else was refused — this is
 # not a general bot gate, and sending a browser UA buys nothing over
 # sending an honest one. The engines take theirs from the browser
-# (CLAUDE.md §8); this constant is for the HTTP paths.
+# instead; this constant is for the HTTP paths.
 HTTP_USER_AGENT = "Mozilla/5.0 (compatible; justjoin-scraper; +https://github.com/2scraper/justjoin-scraper)"
 
 _REFUSED_USER_AGENT_RE = re.compile(r"^Python-urllib/", re.I)
@@ -317,7 +317,7 @@ def user_agent_is_refused(value: Optional[str]) -> bool:
     Exists so the HTTP paths can assert they are not about to send it, and
     so the suite can pin the measurement. A stdlib default that produces a
     403 a long way from its cause is exactly the confusing failure
-    CLAUDE.md §3 wants prevented.
+    the configuration rules exist to prevent.
     """
     return bool(value) and bool(_REFUSED_USER_AGENT_RE.match(value.strip()))
 
@@ -464,7 +464,7 @@ _API_FACETS_RE = re.compile(r"^%s/?$" % re.escape(FACETS_PATH), re.I)
 # It is part of the slug and is NOT the id — the id is the `guid`, which
 # appears nowhere in the URL. So `sku` cannot be recovered from a URL on
 # this site, and `sku_from_url` says so by returning None rather than
-# handing back a slug that would not join against anything (CLAUDE.md §5).
+# handing back a slug that would not join against anything.
 _SKU_IN_URL_RE = None
 
 
@@ -769,7 +769,7 @@ def filters_from_listing_url(url: str) -> Filters:
 def page_url(url: str, page: int) -> Optional[str]:
     """None for a browsable listing URL, and that is the finding.
 
-    CLAUDE.md §7 asks for a `page_url` that reconstructs page N when no
+    Pagination needs a `page_url` that reconstructs page N when no
     next-link matches. On justjoin.it's rendered pages there is no such
     address, and the failure mode is the dangerous one: `?page=2` on a
     listing URL does not error and does not return an empty page — it
@@ -792,8 +792,7 @@ def api_page_url(url: str, page: int, *, items: int = DEFAULT_ITEMS_COUNT
     """Page N of an offers-endpoint URL, by rewriting `from`.
 
     Offset pagination, so page N's address is knowable without fetching
-    page N-1 — which is what makes `--concurrency` meaningful here
-    (CLAUDE.md §7). Returns None past the site's cap rather than building a
+    page N-1 — which is what makes `--concurrency` meaningful here. Returns None past the site's cap rather than building a
     URL that answers HTTP 500.
     """
     if page < 1:
@@ -847,7 +846,7 @@ def category_from_url(url: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 # Every candidate marker below was COUNTED on pages this site plainly
-# served before being kept, which is CLAUDE.md §18's rule and which threw
+# served before being kept, which is the rule and which threw
 # two of them out:
 #
 #   `akamai`        4 occurrences on a served offer page — in the job
@@ -855,7 +854,7 @@ def category_from_url(url: str) -> Optional[str]:
 #                   GCP, AWS, Azure lub Akamai Linode" among the clouds a
 #                   candidate should know. A marker that fires on a real
 #                   page is worse than no marker.
-#   `cf-turnstile`  not carried, for the reason CLAUDE.md §8 gives: the
+#   `cf-turnstile`  not carried, for this reason: the
 #                   2Captcha Scraping Browser's auto-solve extension
 #                   injects it into every page it loads, so it fires on
 #                   good pages and has been measured ABSENT from real
@@ -888,15 +887,15 @@ BOT_CHALLENGE_MARKERS = (
 )
 
 # The site's own asset host. Every page justjoin.it actually serves is
-# built out of it; an interstitial would not be (CLAUDE.md §8's
-# `assets.mmsrg.com` trick, now on its third site). Counted 2026-09-18:
+# built out of it; an interstitial would not be (the own-asset
+# test, proven on sibling sites). Counted 2026-09-18:
 # 5 references on the homepage, 4 on an offer page, 5 on a filtered
 # listing.
 SITE_ASSET_MARKERS = ("public.justjoin.it", "imgproxy.justjoinit.tech",
                       "_next/static")
 
 # The threshold is 1 rather than the 2-3 this trick usually takes, and
-# deliberately: CLAUDE.md §17's classification-order trap is that a
+# deliberately: the classification-order trap is that a
 # minimal-but-real page with fewer references than the measured average
 # comes back "blocked". The asset check is a WEAK secondary signal here,
 # consulted only after the unambiguous ones.
@@ -908,7 +907,7 @@ _ENTITY_PREFIX_BYTES = 4000
 def _normalised_head(html: str) -> str:
     """Lower-cased, entity-unescaped first few KB, for marker matching.
 
-    CLAUDE.md §20: an edge's refusal page reaches a parser spelled two ways
+    An edge's refusal page reaches a parser spelled two ways
     — entity-escaped over a raw HTTP client, plain out of a browser DOM. So
     unescape before matching, and bound it: a refusal page is a few hundred
     bytes, and unescaping 1.8 MB of listing would let a job title deep in
@@ -945,7 +944,7 @@ def count_site_assets(html: Optional[str]) -> int:
 #
 #     "publicRuntimeConfig":{...,"googleRecaptchaV2Key":"6LeTZ-Er...",...}
 #
-# CLAUDE.md §18 says to grep a GOOD page for the site's own captcha config
+# Grep a GOOD page for the site's own captcha config
 # rather than building a marker set from a vendor list, and this is that
 # grep. What it found, and what the engines' docstrings state at length:
 # the key is v2 by the site's own field name, the only string referencing
@@ -955,7 +954,7 @@ def count_site_assets(html: Optional[str]) -> int:
 #
 # So this function has never returned a key that mattered. It is here for
 # the day one does: a solvable challenge whose key the page publishes is
-# better answered with that key than refused (§19 — never pay for a task
+# better answered with that key than refused (never pay for a task
 # the API will reject, but do not decline a task it would accept).
 _RECAPTCHA_KEY_RE = re.compile(
     r'googleRecaptchaV2Key\\?"\s*:\s*\\?"([0-9A-Za-z_-]{20,})')
@@ -1164,7 +1163,7 @@ def _salary_option(entry: Dict[str, Any]) -> SalaryOption:
         minimum=quoted_min,
         maximum=quoted_max,
         # An ISO 4217 code the site states — the most trustworthy rung of
-        # CLAUDE.md §4's ladder. Never defaulted: a null means the entry
+        # the ladder. Never defaulted: a null means the entry
         # named no currency.
         currency=_upper_or_none(entry.get("currency")),
         # Lower-cased: the site spells the same unit "month" and "Month".
@@ -1320,7 +1319,7 @@ def _category_key(record: Dict[str, Any]) -> Optional[str]:
     The flight payload states `categoryId`, an integer, and publishes no
     table mapping it to a key. So a `--route ssr` row's category is null
     rather than a number nobody can read — a guess presented as a fact is
-    the one thing CLAUDE.md §8 will not allow.
+    a guess presented as a fact, which this project never writes.
 
     `parentKey` is read and discarded: it was null on all 1,040 records
     measured, so it gets no column. See the note in `output_writer`.
@@ -1352,7 +1351,7 @@ def _hybrid_days(record: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
 # `applyMethod` is "external" on 800 of 1,000 rows and "form" on 200, and
 # `applyUrl` is non-null on exactly the 800 externals. So the null is the
 # site saying "applied to on our own page", not a missing field — the same
-# shape as CLAUDE.md §21's "use the site's own should-I-show-this flag".
+# shape as the "use the site's own should-I-show-this flag".
 APPLY_METHODS = ("external", "form")
 
 
@@ -1364,8 +1363,7 @@ def _row_from_record(record: Dict[str, Any], *, data_source: str,
 
     Returns None for a record with no id, which is what a payload shape
     this parser does not understand looks like. Failing loudly beats
-    emitting a row of nulls that a consumer cannot tell from a real offer
-    (CLAUDE.md §8).
+    emitting a row of nulls that a consumer cannot tell from a real offer.
     """
     if not isinstance(record, dict):
         return None
@@ -1492,7 +1490,7 @@ def flight_payload(html: Optional[str]) -> str:
 
 # An offer record in the flight payload always opens with `applyUrl`, which
 # is the first key in the site's own serialisation order. Anchoring on a
-# KEY rather than on a CSS class is the same reasoning CLAUDE.md §4 gives
+# KEY rather than on a CSS class is the same reasoning as
 # for anchoring on a URL pattern: the class names here are build hashes and
 # the key names are the site's API contract.
 _FLIGHT_RECORD_RE = re.compile(r'\{"applyUrl":')
@@ -1590,8 +1588,8 @@ _LD_JSON_RE = re.compile(
 def jsonld_blocks(html: Optional[str]) -> List[Any]:
     """Every JSON-LD block on a page.
 
-    Counted before a line of the parser was written, which CLAUDE.md §15
-    asks for and which decided this repo's whole shape: a rendered listing
+    Counted before a line of the parser was written, which
+    is the right order and which decided this repo's whole shape: a rendered listing
     page publishes exactly TWO blocks, a `CollectionPage` and a
     `BreadcrumbList`. The `CollectionPage` carries `hasPart` — a list of
     100 bare URLs with `@type: CreativeWork` and NOTHING else: no title, no
@@ -1638,7 +1636,7 @@ def itemlist_urls(html: Optional[str]) -> List[str]:
 # The one this scraper walks. justjoin.it advertises eight sitemaps in its
 # robots.txt, including an `expired-jobs.xml`; that one is deliberately NOT
 # carried here, because a constant nothing reads is the same defect as dead
-# code (CLAUDE.md §17). Anyone who wants the expired board can point
+# code. Anyone who wants the expired board can point
 # `--slugs-file` at it.
 SITEMAP_INDEX = BASE + "/sitemaps/active-jobs.xml"
 
@@ -1731,8 +1729,7 @@ class ListingPage:
     The shape every engine in this family expects from a listing parser.
     `total_items` is the site's own capped figure and `site_total` is what
     the board actually holds; keeping both is what lets a run report
-    `complete` honestly while still saying it holds half the board
-    (CLAUDE.md §21).
+    `complete` honestly while still saying it holds half the board.
     """
 
     rows: List[JobPosting] = field(default_factory=list)
@@ -1767,7 +1764,7 @@ def parse_offers_response(text: Optional[str], *, url: str = "",
                           scraped_at: Optional[str] = None) -> ListingPage:
     """Rows from one offers-endpoint response.
 
-    `page` is threaded in rather than defaulted. CLAUDE.md §18 names the
+    `page` is threaded in rather than defaulted. A sibling repo hit the
     arithmetic bug that prevents: `position` restarts at 1 on every page,
     so a `page` column that is 1 on every row makes `page`+`position`
     collide and the position column worthless.
@@ -1915,7 +1912,7 @@ def parse_facets_response(text: Optional[str], *,
     """The board's own taxonomy with its own counts.
 
     A different KIND of object from a job posting, so it gets its own row
-    class rather than being bent into `JobPosting` (CLAUDE.md §9). What
+    class rather than being bent into `JobPosting`. What
     makes it worth a mode: these counts are NOT capped at 10,000. They
     describe all 19,381 offers, which makes them the tool for planning a
     run that reaches past the cap — 25 category runs of at most 1,991 rows
@@ -1977,7 +1974,7 @@ def cap_report(total_items: Optional[int], site_total: Optional[int],
                rows_collected: int) -> Dict[str, Any]:
     """The arithmetic a sidecar records beside `status: complete`.
 
-    CLAUDE.md §21: "complete" and "exhaustive" are different words. A run
+    "Complete" and "exhaustive" are different words. A run
     that fetches all 10,000 reachable rows really did fetch everything the
     site will serve for that query, and it is also a 52% sample of a board
     holding 19,381. Recording only "complete" is lying by omission, and the
@@ -2029,12 +2026,12 @@ def cap_report(total_items: Optional[int], site_total: Optional[int],
 #
 # These five are pure functions of the parsed arguments, with no driver and
 # no JavaScript in them, and they live here rather than in each engine for
-# the reason CLAUDE.md §1 gives for `page_flow`: three copies of "which URL
+# the reason `page_flow` exists: three copies of "which URL
 # does this run fetch" would drift, and the drift would be silent — one
 # engine reading the endpoint where its twin reads the rendered page, on
 # the same command line.
 #
-# It is the same argument §17 makes about a shared module's signature, one
+# It is the same argument as for a shared module's signature, one
 # step earlier: an engine cannot disagree with its twins about a decision
 # it does not make.
 
@@ -2050,7 +2047,7 @@ def filters_from_args(args) -> Filters:
     A `--url` naming a browsable listing is translated into the same
     filters the site's own front end would send for it, so a user can paste
     an address out of their browser and the flags stay optional. Explicit
-    flags win over anything read from the URL — CLAUDE.md §3's precedence
+    flags win over anything read from the URL — the precedence
     rule, applied to filters rather than to credentials.
     """
     from_url = (filters_from_listing_url(args.url)
@@ -2284,7 +2281,7 @@ _MIN_BODY_BYTES = 200
 # classify a delisted offer as `parse_error` there: a RETRY, a debug dump
 # and a wasted fetch, for an address that will never exist again.
 #
-# Found by the canary on its first run, which is CLAUDE.md §15 exactly —
+# Found by the canary on its first run, which is why live runs come first —
 # the first slug in the sitemap had been taken down between the sitemap
 # being generated and the run reading it, and every engine called it a
 # parse_error because the navigation status was being discarded.
@@ -2305,7 +2302,7 @@ def detect_page_state(body: Optional[str], status: Optional[int] = None,
     """Name what justjoin.it answered with.
 
     The signals are ordered by how much each one PROVES, not by how cheap
-    it is to test — CLAUDE.md §17's classification-order trap, where a
+    it is to test — the classification-order trap, where a
     threshold heuristic ran ahead of an unambiguous marker and reported
     exit 3 for a correct answer. So:
 
@@ -2324,7 +2321,7 @@ def detect_page_state(body: Optional[str], status: Optional[int] = None,
       6. a substantial body this parser could not read is `parse_error` —
          NOT "zero offers". A served response that parses to nothing is
          this repo's bug, and reporting it as an empty board sends the
-         reader to check their filters instead of the parser (§20);
+         reader to check their filters instead of the parser;
       7. anything else is `unknown`: wait and retry, do not spend.
     """
     text = body or ""
@@ -2372,7 +2369,7 @@ def detect_page_state(body: Optional[str], status: Optional[int] = None,
 
     # (4) Walking off the end of a capped result set. `from=10000` and
     # `from=10100` are both HTTP 500 — the site manufactures an error that
-    # reads like a bug in this scraper, so name it for what it is (§21).
+    # reads like a bug in this scraper, so name it for what it is.
     if status == 500 and _asks_past_cap(url):
         return "cap_exceeded"
 

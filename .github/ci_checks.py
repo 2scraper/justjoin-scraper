@@ -81,7 +81,7 @@ CREDENTIAL_ALLOWED = (
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 # Contexts in which a 32-hex string is plainly not a key. Site-specific
 # entries belong here only once a committed fixture actually carries one —
-# CLAUDE.md §16: a family-wide entry copied without checking is how dead
+# A family-wide entry copied without checking is how dead
 # code spreads. Kept as a CONTEXT allowlist rather than by loosening the
 # pattern: a bare 32-hex string anywhere else still fails, which is the
 # point of the check.
@@ -107,7 +107,7 @@ def _is_virtualenv(path):
     walked into pip's vendored code and flagged a 32-hex string in
     `_elffile.py` as key-shaped. The run was correct about the string and
     wrong about the file, and a guard people have to argue with is one they
-    learn to suppress (CLAUDE.md §22).
+    learn to suppress.
 
     Structural rather than by name, for the same reason a parser anchors on a
     URL pattern instead of a CSS class: `venv`, `.venv`, `.v`, `env39` and
@@ -128,7 +128,10 @@ def scanned_files():
             continue
         if path.suffix not in SCANNED_SUFFIXES:
             continue
-        if any(part in _SKIP_NAMES for part in path.parts):
+        # RELATIVE parts: the absolute path includes every ancestor, so a
+        # clone under ~/build, /srv/env or a directory called venv matched
+        # here on every file, scanned nothing and reported clean.
+        if any(part in _SKIP_NAMES for part in path.relative_to(REPO).parts):
             continue
         if any(root in path.parents for root in skip_roots):
             continue
