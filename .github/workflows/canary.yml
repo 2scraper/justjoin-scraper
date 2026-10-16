@@ -16,7 +16,7 @@
 # `python-requests` and to `wget`. Sixteen candidate bot-challenge markers
 # counted at zero across seven captures.
 #
-# So these jobs run a real scrape every morning from a runner with no
+# So these jobs run a real scrape every Monday from a runner with no
 # secrets, and they are expected to be GREEN. That is not a convenience — it
 # is what keeps the central claim of this repo's README honest. If
 # justjoin.it ever puts these routes behind a challenge, a key or a rate
@@ -32,7 +32,7 @@ on:
   schedule:
     # 05:40 UTC. Not on the hour: every scheduled workflow on GitHub fires
     # at :00 and the queue there is long.
-    - cron: "40 5 * * *"
+    - cron: "40 5 * * 1"
   workflow_dispatch:
 
 permissions:

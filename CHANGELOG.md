@@ -11,6 +11,10 @@ burying it.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary now runs weekly (Mondays 05:40 UTC) instead of daily, and on a manual dispatch.
+
 ## [0.1.4] — 2026-10-15
 
 > **Behaviour changes for existing users.** `--route ssr` now refuses, with
