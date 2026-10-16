@@ -515,7 +515,7 @@ absent" reads identically to a real import error.
 Fixtures are cut from real captures and verified to parse identically to
 their untrimmed originals.
 
-The daily [canary](.github/workflows/canary.yml) runs a real 3-page scrape
+The weekly (Monday) [canary](.github/workflows/canary.yml) runs a real 3-page scrape
 from a bare GitHub runner and is **expected to be green**: the listing path
 needs no credentials, so gating it on a secret would hide the day that
 stops being true.
