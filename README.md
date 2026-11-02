@@ -1,4 +1,4 @@
-# justjoin-scraper
+# Just Join IT Scraper — Polish IT Job Offers and Salaries in Python
 
 [![release](https://img.shields.io/github/v/release/2scraper/justjoin-scraper?sort=semver)](https://github.com/2scraper/justjoin-scraper/releases)
 [![tests](https://github.com/2scraper/justjoin-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/justjoin-scraper/actions/workflows/tests.yml)
@@ -7,6 +7,8 @@
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-informational)](#engines)
 [![runs without an account](https://img.shields.io/badge/runs%20without%20an%20account-yes-brightgreen)](#do-you-need-anything-paid-no)
+
+**Just Join IT scraper** — an open-source (MIT) Python tool that reads the justjoin.it job board (listings, single offers and the board's own facet counts) and writes salaries, seniority, required skills and their levels, languages, workplace type and locations to JSON or CSV. Measured on 2026-09-18, every route it reads was served in full to a bare datacentre address with no credentials, so nothing paid is needed. Use it to build a dataset of Polish IT job offers and salaries, or compare two runs with `diff_runs.py`.
 
 A scraper for **[justjoin.it](https://justjoin.it)**, the Polish IT job
 board: salaries, seniority, required skills and their levels, languages,
@@ -521,6 +523,23 @@ needs no credentials, so gating it on a secret would hide the day that
 stops being true.
 
 ---
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [Mercor scraper](https://github.com/2scraper/mercor-scraper) — AI-talent marketplace: contract roles, rates, eligibility…
+- [Wellfound scraper](https://github.com/2scraper/wellfound-scraper) — Startup jobs from Wellfound with salary and equity ranges…
+- [Better Business Bureau scraper](https://github.com/2scraper/bbb-scraper) — BBB search and category listings with no key or proxy, plus…
+- [Flippa scraper](https://github.com/2scraper/flippa-scraper) — Online businesses for sale on Flippa
+- [G2 scraper](https://github.com/2scraper/g2-scraper) — Categories, product pages and pricing pages
+- [Google Play scraper](https://github.com/2scraper/googleplay-scraper) — Apps, installs, rating histograms and unbounded reviews…
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Contributing
 
