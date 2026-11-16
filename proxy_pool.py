@@ -25,8 +25,11 @@ down and relaunches rather than swapping the proxy under a live session.
 
 from __future__ import annotations
 
+import base64
 import logging
 import random
+import socket
+import ssl
 from typing import List, Optional
 from urllib.parse import urlparse
 
@@ -320,3 +323,56 @@ def from_args(args) -> Optional[ProxyPool]:
         return ProxyPool([entry], rotate="per-run")
 
     return None
+
+
+
+def verify_credentials(url: Optional[str], timeout: float = 10.0) -> None:
+    """Raise ProxyError when the proxy answers 407 to a CONNECT.
+
+    A wrong login or password makes the proxy answer at once, but Chromium
+    reports it as a page that never loads: a run waited two minutes (60 s for
+    the board count, 60 s for page 1) and ended `page_load_timeout`, naming
+    neither the proxy nor the credentials. The commonest mistake of someone
+    filling in `.env`. One CONNECT to the site's host costs a few hundred
+    bytes and says so in seconds.
+
+    Only a 407 is decisive. Any other outcome (an unreachable proxy, a
+    non-HTTP scheme, a timeout, a 200) returns silently: the engines already
+    handle those, and a preflight that guessed would add failures of its own.
+    """
+    if not url:
+        return
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return
+    headers = ["CONNECT justjoin.it:443 HTTP/1.1", "Host: justjoin.it:443"]
+    if parsed.username or parsed.password:
+        token = base64.b64encode(("%s:%s" % (parsed.username or "",
+                                             parsed.password or ""))
+                                 .encode("utf-8")).decode("ascii")
+        headers.append("Proxy-Authorization: Basic " + token)
+    request = ("\r\n".join(headers) + "\r\n\r\n").encode("ascii")
+    try:
+        sock = socket.create_connection((parsed.hostname, port),
+                                        timeout=timeout)
+        try:
+            if parsed.scheme == "https":
+                sock = ssl.create_default_context().wrap_socket(
+                    sock, server_hostname=parsed.hostname)
+            sock.settimeout(timeout)
+            sock.sendall(request)
+            status = sock.recv(256).split(b"\r\n", 1)[0].decode("latin-1")
+        finally:
+            sock.close()
+    except (OSError, ValueError):
+        return
+    if " 407" in status[:16]:
+        raise ProxyError(
+            "%s answered 407 Proxy Authentication Required: the login or "
+            "password in the proxy URL was refused (host and port are "
+            "reachable). Check the credentials in --proxy / the proxy file / "
+            "JUSTJOIN_PROXY." % mask(url))

@@ -436,7 +436,8 @@ Known limits, stated rather than left to be discovered:
   `user:pass` URL is doing something.
 * **pyppeteer is effectively unmaintained** and its own README points at
   Playwright. It gains `--chromium-path`, which its twins do not need
-  because they do not ship a browser.
+  because they do not ship a browser. On Apple Silicon you must pass it:
+  the Chromium pyppeteer downloads is x86_64 and does not start.
 
 There is also `scraper_api_client.py`, which renders a page on 2Captcha's
 infrastructure and feeds the result to the same parser.

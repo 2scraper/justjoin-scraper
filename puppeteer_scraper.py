@@ -30,6 +30,7 @@ import asyncio
 import concurrent.futures
 import logging
 import re
+import platform
 import sys
 import threading
 import time
@@ -48,11 +49,13 @@ from urllib.parse import urlparse, urljoin, parse_qsl
 # `pip install pyppeteer`) without anything failing, because nothing ever
 # imported it.
 from pyppeteer import launch, connect
+from pyppeteer.errors import BrowserError
 
 from captcha_solver import (detect_recaptcha_v3, detect_recaptcha_in_page,
                             reconcile_detections, solve_recaptcha,
                             solve_attempts,
                             CaptchaUnsolvable, INJECT_TOKEN_JS,
+                            SUBMIT_RECAPTCHA_FORM_JS,
                             RECAPTCHA_DISCOVERY_JS, detect_turnstile,
                             wait_for_turnstile, TURNSTILE_INTERCEPT_JS,
                             TURNSTILE_INJECT_JS, turnstile_task_for)
@@ -75,7 +78,7 @@ from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
 import page_flow
 from page_flow import MIN_CARD_MATCHES
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
-                        ProxyError, split_credentials)
+                        ProxyError, split_credentials, verify_credentials)
 import env_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -226,6 +229,9 @@ class PageOutcome:
     products: List = field(default_factory=list)
     blocked_by: Optional[str] = None
     load_failed: bool = False
+    # Chromium's own name for a proxy fault when that, not a timeout, ended
+    # the load (ERR_PROXY_CONNECTION_FAILED, ...). Lets the sidecar say so.
+    proxy_failed: Optional[str] = None
     state: Optional[str] = None
     # What this response said about itself.
     #
@@ -274,6 +280,50 @@ def _mask_credentials(text: str) -> str:
     and is not the secret.
     """
     return _CREDENTIALS_IN_URL_RE.sub(r"\1***:***@", text or "")
+
+
+async def _install_proxy_auth(page, username: str, password: str) -> None:
+    """Answer the proxy's 407 over the CDP `Fetch` domain.
+
+    Replaces `page.authenticate()`: pyppeteer 2.0.0 implements that with
+    `Network.setRequestInterception`, which current Chromium no longer has
+    ("'Network.setRequestInterception' wasn't found"), so a proxy with a
+    login crashed the browser before the first request (verified against
+    Chromium 154 and reported against 157).
+
+    `Fetch.enable` pauses every request, so each one is continued; the
+    credentials are offered once per request and then cancelled, so a
+    refused login ends the load instead of looping.
+    """
+    client = page._client
+    answered = set()
+
+    async def send(method, params):
+        try:
+            await client.send(method, params)
+        except Exception:  # noqa: BLE001 - the page may already be gone
+            pass
+
+    def on_paused(event):
+        asyncio.ensure_future(send("Fetch.continueRequest",
+                                   {"requestId": event["requestId"]}))
+
+    def on_auth(event):
+        request_id = event["requestId"]
+        from_proxy = (event.get("authChallenge") or {}).get("source") == "Proxy"
+        if from_proxy and request_id not in answered:
+            answered.add(request_id)
+            response = {"response": "ProvideCredentials",
+                        "username": username, "password": password}
+        else:
+            response = {"response": "CancelAuth" if from_proxy else "Default"}
+        asyncio.ensure_future(send("Fetch.continueWithAuth", {
+            "requestId": request_id, "authChallengeResponse": response}))
+
+    client.on("Fetch.requestPaused", on_paused)
+    client.on("Fetch.authRequired", on_auth)
+    await client.send("Fetch.enable", {"handleAuthRequests": True,
+                                       "patterns": [{"urlPattern": "*"}]})
 
 
 def _chrome_ua(version: str) -> str:
@@ -354,7 +404,7 @@ class _Session:
         credentials = None
         if self.pool:
             exit_url = self.pool.current
-            # Credentials go through page.authenticate(), never onto the
+            # Credentials go through CDP (_install_proxy_auth), never onto the
             # command line: --proxy-server= becomes part of the browser's
             # argv, readable by anything that can run `ps`.
             scrubbed, credentials = split_credentials(exit_url)
@@ -379,8 +429,8 @@ class _Session:
         if self.args.fingerprint:
             self._apply_fingerprint()
         if credentials:
-            self.bridge.run(self.page.authenticate(
-                {"username": credentials[0], "password": credentials[1]}))
+            self.bridge.run(_install_proxy_auth(
+                self.page, credentials[0], credentials[1]))
         return self
 
     def _apply_fingerprint(self):
@@ -504,6 +554,35 @@ def _content(session) -> Optional[str]:
     return _driver(session)["content"]()
 
 
+def _markup_view(session, url: str, state: str, body: str):
+    """(state, body) re-read from the document's MARKUP when that can tell more.
+
+    On the endpoint route the body is `innerText`, which keeps neither the
+    `<title>` nor the `<script>` tags a challenge page is recognised by, and
+    which was also what a refusal saved to `*_debug.html` (41 bytes of text
+    for a page the message says to inspect as HTML). So for a state the
+    policy cannot use, or one it already counts as blocked, look at the
+    serialised document: a challenge marker there turns `unknown` into
+    `blocked` (exit 3, not 4/5), and a blocked page is saved with its markup.
+    """
+    if not _is_endpoint(url):
+        return state, body
+    if not (state in ("unknown", "parse_error")
+            or page_flow.counts_as_blocked(state)):
+        return state, body
+    try:
+        markup = session.bridge.run(session.page.content()) or ""
+    except Exception:
+        return state, body
+    if not markup:
+        return state, body
+    if state != "blocked" and detect_bot_challenge(markup):
+        state = "blocked"
+    if page_flow.counts_as_blocked(state):
+        body = markup
+    return state, body
+
+
 def _is_endpoint(url: str) -> bool:
     """Whether this address answers with raw JSON rather than a document.
 
@@ -531,6 +610,15 @@ def _snapshot(session, url: str):
             return None
     return _driver(session)["content"]()
 
+
+def _fetch_sitemap(session, url: str, timeout_ms: int = 60000) -> str:
+    """`_fetch_page_source` for the sitemap, which raises on a refusal."""
+    response = session.bridge.run(session.page.goto(
+        url, {"waitUntil": "domcontentloaded", "timeout": timeout_ms}))
+    text = session.bridge.run(session.page.content()) or ""
+    page_flow.raise_if_sitemap_blocked(
+        getattr(response, "status", None), text)
+    return text
 
 def _fetch_page_source(session, url: str, timeout_ms: int = 60000) -> str:
     """Navigate and return the serialised document. Used for enumeration.
@@ -617,10 +705,15 @@ def handle_captcha_if_present(session, args) -> bool:
     except Exception as e:  # noqa: BLE001
         logger.error("Solving the challenge failed (%s).", e)
         return False
-    bridge.run(page.evaluate(INJECT_TOKEN_JS, token))
-    logger.info("Token injected. Reloading page to continue.")
+    called = bridge.run(page.evaluate(INJECT_TOKEN_JS, token))
+    submitted = False if called else bool(
+        bridge.run(page.evaluate(SUBMIT_RECAPTCHA_FORM_JS)))
+    # No reload: it discards the token, which cost money to get.
+    logger.info("Token injected%s; the page is left as it is, because a "
+                "reload would drop the token.",
+                " and handed to the page's callback" if called
+                else (" and its form submitted" if submitted else ""))
     time.sleep(1.5)
-    bridge.run(page.reload({"waitUntil": "domcontentloaded", "timeout": 60000}))
     return True
 
 
@@ -772,6 +865,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             state = page_flow.classify(html, http_status, page.url, args.mode,
                                    args.route)
 
+        state, body = _markup_view(session, url, state, body)
+
         # The paid path is reached for any state page_flow.STATE_POLICY marks
         # solvable — on this site that is `blocked`; there is no separate
         # `challenge` state (see page_flow's docstring). Bounded by
@@ -863,6 +958,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             logger.error("Gave up loading %s after %d attempt(s).",
                          url, args.retries)
         outcome.load_failed = True
+        outcome.proxy_failed = exit_failed
         outcome.blocked_by = None
         return outcome
 
@@ -1071,6 +1167,8 @@ def scrape(args) -> int:
                        "remote browser has its own exit, and layering a second "
                        "proxy on top would contradict it.")
         pool = None
+    if pool:
+        verify_credentials(pool.current)
     if args.concurrency > 1:
         logger.warning("--concurrency is ignored in this engine: parallel page "
                        "fetching is implemented in playwright_scraper.py, "
@@ -1089,8 +1187,17 @@ def scrape(args) -> int:
         # content decides how many pages there are, so the order reverses.
         offer_slugs = []
         if args.mode == "offer" and not is_single_offer_url(args):
-            offer_slugs = page_flow.enumerate_offers(
-                lambda u: _fetch_page_source(session, u), args)
+            offer_slugs, sitemap_blocked, _tried = (
+                page_flow.enumerate_offers_resilient(
+                    lambda u: _fetch_sitemap(session, u), args, pool,
+                    session.relaunch))
+            if sitemap_blocked:
+                return finish_run(
+                    [], args.out, args.format, args.allow_empty,
+                    blocked=True, stop_reason="blocked_sitemap",
+                    pages_requested=args.pages, pages_completed=0,
+                    mode=args.mode, source=SOURCE_DEFAULT,
+                    start_url=args.url or "", final_url="")
             if not offer_slugs:
                 return finish_run(
                     [], args.out, args.format, args.allow_empty,
@@ -1140,7 +1247,8 @@ def scrape(args) -> int:
         independent = page_flow.pages_are_independent(args.mode, offer_slugs)
         first_verdict = page_flow.queue_decision(first.state, None, independent)
         if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
+            stop_reason = (("proxy_unreachable" if first.proxy_failed
+                                       else "page_load_timeout") if first.load_failed
                            else f"blocked_{first.blocked_by}")
             blocked = first.blocked_by is not None
         elif first_verdict:
@@ -1180,7 +1288,8 @@ def scrape(args) -> int:
                     break
                 outcomes.append(outcome)
                 if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
+                    stop_reason = (("proxy_unreachable" if outcome.proxy_failed
+                                       else "page_load_timeout") if outcome.load_failed
                                    else f"blocked_{outcome.blocked_by}")
                     blocked = outcome.blocked_by is not None
                     break
@@ -1503,7 +1612,7 @@ def parse_args():
     p.add_argument("--out", default="justjoin_jobs", help="Output file prefix")
     p.add_argument("--proxy", default=None,
                    help="Proxy URL, e.g. http://ACCOUNT:PASSWORD@HOST:9999. "
-                        "Credentials are sent over CDP (page.authenticate), "
+                        "Credentials are sent over CDP (Fetch.authRequired), "
                         "never on the browser's command line.")
     p.add_argument("--proxy-file", default=None,
                    help="File with one proxy URL per line to rotate across. "
@@ -1642,6 +1751,17 @@ if __name__ == "__main__":
     args = parse_args()
     try:
         sys.exit(scrape(args))
+    except BrowserError as e:
+        # pyppeteer's own download is an x86_64 Chromium; on Apple Silicon it
+        # cannot start and the failure is a bare "Browser closed unexpectedly"
+        # with a traceback. Say what to do about it.
+        logger.error("Chromium did not start (%s).%s Pass --chromium-path "
+                     "with an installed Chrome or Chromium.", e,
+                     " pyppeteer's bundled Chromium is x86_64 and does not "
+                     "run on Apple Silicon." if platform.machine().lower()
+                     in ("arm64", "aarch64") and sys.platform == "darwin"
+                     else "")
+        sys.exit(1)
     except KeyboardInterrupt:
         # Reached only when nothing was written yet: once a page has been
         # fetched the loops end the run as `interrupted` and write it.

@@ -1176,20 +1176,41 @@ INJECT_TOKEN_JS = """
   }
   el.value = token;
   el.innerHTML = token;
+  let called = 0;
   try {
     if (window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients) {
       Object.values(window.___grecaptcha_cfg.clients).forEach((client) => {
         Object.values(client).forEach((prop) => {
           if (prop && typeof prop === 'object') {
             Object.values(prop).forEach((cb) => {
-              if (typeof cb === 'function') { try { cb(token); } catch (e) {} }
+              if (typeof cb === 'function') {
+                try { cb(token); called += 1; } catch (e) {}
+              }
             });
           }
         });
       });
     }
   } catch (e) { /* best effort, non-fatal */ }
-  return true;
+  return called;
+}
+"""
+
+# Submits the form that holds the token field, WITHOUT reloading. A reload
+# discards `g-recaptcha-response` (verified on Google's reCAPTCHA demo: the
+# field was empty after `reload()` and the form failed; with the token left in
+# place it passed), so the engines inject, let the page's own callback run or
+# submit this form, and carry on from the page as it is. Returns whether a
+# form was submitted.
+SUBMIT_RECAPTCHA_FORM_JS = """
+() => {
+  const el = document.getElementById('g-recaptcha-response');
+  const form = el && el.form;
+  if (!form) return false;
+  try {
+    if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
+    return true;
+  } catch (e) { return false; }
 }
 """
 

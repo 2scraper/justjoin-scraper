@@ -26,6 +26,14 @@ burying it.
 - `diff_runs.py`: refuses `--route api` against `--route ssr`; warns when a listings run took less than 100% of its query; says "no such file" for a missing input.
 - `scraper_api_client.py`: a listing page (`/job-offers/...`) is parsed as the rendered page; an offer page, a non-justjoin.it host, `--timeout` outside 1-120 and `--mode` mismatches are refused before the paid request; `--mode facets` defaults to the facets endpoint; the help no longer carries text from another scraper.
 - A mistyped `--proxy` entry is shown in the error instead of `?://?`.
+- A proxy that refuses its login (HTTP 407 to a CONNECT) is named at once and exits 2, instead of two minutes of timeouts ending in `page_load_timeout`. The password is not echoed.
+- Puppeteer with a proxy login: credentials are answered over the CDP `Fetch` domain. `page.authenticate()` needs a method current Chromium no longer has, so the browser died before the first request. Checked against a local authenticating proxy and Chromium 154.
+- A refused sitemap in `--mode offer` (HTTP 403/429 or a challenge page) now moves to the next exit like a refused listing page does, and ends as exit 3 (`blocked_sitemap`) instead of `enumeration_empty` ("the sitemap is empty").
+- On the endpoint route a challenge page that carries its marker only in the markup is classified as blocked (exit 3, not 4/5), and a refused page is saved with its markup instead of 41 bytes of `innerText`.
+- A dead proxy ends the run as `proxy_unreachable` in the sidecar, not `page_load_timeout`.
+- A reCAPTCHA token is no longer thrown away by a page reload: the page's own callback runs, or the form holding the token field is submitted, and the page is left as it is. Checked on a local page; no paid solve was bought for this.
+- Puppeteer without a usable Chromium (Apple Silicon's bundled x86_64 one) prints a `--chromium-path` hint instead of a traceback.
+- A misspelt `--category` is flagged with a close match; the `html` category, which the site no longer serves, is gone from the hint list and the README loop. `sample_output.*` was regenerated from a live run and now shows rows with several contract types.
 - The `--route ssr` help and warnings say about 50 rows, not 100; the README loop no longer lists the `html` category, and states that only the Playwright engine fetches pages in parallel.
 
 ### Changed

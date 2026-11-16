@@ -38,6 +38,7 @@ import re
 from typing import Callable, List, Optional
 
 from product_parser import (DEFAULT_ITEMS_COUNT, DEFAULT_ROUTE,  # noqa: F401
+                            detect_bot_challenge,
                             MAX_FROM, api_page_url, detail_api_url,
                             detect_bot_challenge, detect_page_state,
                             pages_available_for, route_of,
@@ -531,6 +532,53 @@ _PROXY_ERROR_MARKERS = (
 
 
 
+class SitemapBlocked(RuntimeError):
+    """The sitemap fetch was refused (403/429 or a challenge page)."""
+
+
+def raise_if_sitemap_blocked(status, text) -> None:
+    """Called with each sitemap response; raises SitemapBlocked on a refusal.
+
+    Without it a 403 and a Cloudflare page both read as "no <loc> elements",
+    and the run ended `enumeration_empty` ("the sitemap is empty"), which
+    sends a person to check the sitemap when the exit is what was refused.
+    """
+    if status in (403, 429):
+        raise SitemapBlocked("HTTP %s" % status)
+    marker = detect_bot_challenge(text)
+    if marker:
+        raise SitemapBlocked("challenge page (%s)" % marker)
+
+
+def enumerate_offers_resilient(fetch_source, args, pool, relaunch):
+    """`enumerate_offers`, with the block handling the listing loop has.
+
+    Returns (slugs, blocked, exits_tried). A refused sitemap is retried from
+    the next exit of a pool (a fresh browser: `relaunch()`), or once more
+    without one, bounded by the same knobs as the page loop.
+    """
+    has_pool = bool(pool and len(pool) > 1)
+    retries = 0 if not RETRY_ON_BLOCKED else (
+        getattr(args, "proxy_block_retries", 0) if has_pool
+        else BLOCK_RETRIES_WITHOUT_POOL)
+    for attempt in range(retries + 1):
+        try:
+            return enumerate_offers(fetch_source, args), False, attempt + 1
+        except SitemapBlocked as exc:
+            if attempt >= retries:
+                log.error("The sitemap was refused (%s) after %d attempt(s)."
+                          "%s", exc, attempt + 1,
+                          " Every exit tried was refused." if has_pool else "")
+                return [], True, attempt + 1
+            log.warning("The sitemap was refused (%s) — retrying%s (%d/%d).",
+                        exc, " from another exit" if has_pool else "",
+                        attempt + 1, retries)
+            if has_pool:
+                pool.advance("sitemap refused")
+                relaunch()
+    return [], True, retries + 1
+
+
 def enumerate_offers(fetch_source, args) -> List[str]:
     """Every offer slug this run could fetch, in a stable order.
 
@@ -558,6 +606,8 @@ def enumerate_offers(fetch_source, args) -> List[str]:
         read += 1
         try:
             xml = fetch_source(url)
+        except SitemapBlocked:
+            raise
         except Exception as exc:
             log.warning("Sitemap %s did not load (%s); continuing with "
                            "what has been read.", url, mask_secrets(str(exc))[:120])

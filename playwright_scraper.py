@@ -101,6 +101,7 @@ from captcha_solver import (detect_recaptcha_v3, detect_recaptcha_in_page,
                             reconcile_detections, solve_recaptcha,
                             solve_attempts,
                             CaptchaUnsolvable, INJECT_TOKEN_JS,
+                            SUBMIT_RECAPTCHA_FORM_JS,
                             RECAPTCHA_DISCOVERY_JS, detect_turnstile,
                             wait_for_turnstile, TURNSTILE_INTERCEPT_JS,
                             TURNSTILE_INJECT_JS, turnstile_task_for)
@@ -133,7 +134,7 @@ from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
 import page_flow
 from page_flow import MIN_CARD_MATCHES
 from proxy_pool import (from_args as proxy_pool_from_args, to_playwright, mask,
-                        ROTATE_MODES, ProxyError, ProxyPool)
+                        ROTATE_MODES, ProxyError, ProxyPool, verify_credentials)
 import env_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -171,6 +172,9 @@ class PageOutcome:
     products: List = field(default_factory=list)
     blocked_by: Optional[str] = None
     load_failed: bool = False
+    # Chromium's own name for a proxy fault when that, not a timeout, ended
+    # the load (ERR_PROXY_CONNECTION_FAILED, ...). Lets the sidecar say so.
+    proxy_failed: Optional[str] = None
     # The page_flow state this page came back as ("content", "blocked",
     # "challenge", "empty", "unknown"). Carried so the caller can tell an
     # EMPTY page — a /p/<slug> hub, a no-match query, or one page past the
@@ -333,6 +337,15 @@ def _fetch_text(session, url: str, timeout_ms: int = 60000) -> str:
     session.page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
     return _snapshot(session.page, url) or ""
 
+
+def _fetch_sitemap(session, url: str, timeout_ms: int = 60000) -> str:
+    """`_fetch_page_source` for the sitemap, which raises on a refusal."""
+    response = session.page.goto(url, wait_until="domcontentloaded",
+                                 timeout=timeout_ms)
+    text = session.page.content() or ""
+    page_flow.raise_if_sitemap_blocked(
+        response.status if response is not None else None, text)
+    return text
 
 def _fetch_page_source(session, url: str, timeout_ms: int = 60000) -> str:
     """Navigate and return the serialised document.
@@ -635,6 +648,35 @@ def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
     return None
 
 
+def _markup_view(session, url: str, state: str, body: str):
+    """(state, body) re-read from the document's MARKUP when that can tell more.
+
+    On the endpoint route the body is `innerText`, which keeps neither the
+    `<title>` nor the `<script>` tags a challenge page is recognised by, and
+    which was also what a refusal saved to `*_debug.html` (41 bytes of text
+    for a page the message says to inspect as HTML). So for a state the
+    policy cannot use, or one it already counts as blocked, look at the
+    serialised document: a challenge marker there turns `unknown` into
+    `blocked` (exit 3, not 4/5), and a blocked page is saved with its markup.
+    """
+    if not _is_endpoint(url):
+        return state, body
+    if not (state in ("unknown", "parse_error")
+            or page_flow.counts_as_blocked(state)):
+        return state, body
+    try:
+        markup = session.page.content() or ""
+    except (PWError, PWTimeout):
+        return state, body
+    if not markup:
+        return state, body
+    if state != "blocked" and detect_bot_challenge(markup):
+        state = "blocked"
+    if page_flow.counts_as_blocked(state):
+        body = markup
+    return state, body
+
+
 def _is_endpoint(url: str) -> bool:
     """Whether this address answers with raw JSON rather than a document.
 
@@ -866,7 +908,16 @@ def handle_captcha_if_present(page, args) -> bool:
                         "is worth ruling out if a paid token is refused.",
                         challenge.solved_user_agent[:60] + "…")
     else:
-        page.evaluate(INJECT_TOKEN_JS, token)
+        called = page.evaluate(INJECT_TOKEN_JS, token)
+        submitted = False if called else bool(
+            page.evaluate(SUBMIT_RECAPTCHA_FORM_JS))
+        # No reload: it discards the token, which cost money to get.
+        logger.info("Token injected%s; the page is left as it is, because a "
+                    "reload would drop the token.",
+                    " and handed to the page's callback" if called
+                    else (" and its form submitted" if submitted else ""))
+        page.wait_for_timeout(1500)
+        return True
     logger.info("Token injected. Reloading page to continue.")
     page.wait_for_timeout(1500)
     page.reload(wait_until="domcontentloaded", timeout=60000)
@@ -1050,6 +1101,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             state = _classify(session.page, body, http_status, args.mode,
                           args.route)
 
+        state, body = _markup_view(session, url, state, body)
+
         # The paid path is reached for any state page_flow.STATE_POLICY marks
         # solvable — on this site that is `blocked`; there is no separate
         # `challenge` state (see page_flow's docstring). Bounded by
@@ -1137,6 +1190,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             logger.error("Gave up loading %s after %d attempt(s).",
                          url, args.retries)
         outcome.load_failed = True
+        outcome.proxy_failed = exit_failed
         outcome.blocked_by = None
         return outcome
 
@@ -1511,6 +1565,8 @@ def scrape(args) -> int:
                        "remote browser has its own exit, and layering a second "
                        "proxy on top would contradict it.")
         pool = None
+    if pool:
+        verify_credentials(pool.current)
 
     concurrency = max(1, args.concurrency)
     if concurrency > 1:
@@ -1564,8 +1620,17 @@ def scrape(args) -> int:
             # are, so the order is the other way round.
             offer_slugs: List[str] = []
             if args.mode == "offer" and not is_single_offer_url(args):
-                offer_slugs = page_flow.enumerate_offers(
-                    lambda u: _fetch_page_source(session, u), args)
+                offer_slugs, sitemap_blocked, _tried = (
+                    page_flow.enumerate_offers_resilient(
+                        lambda u: _fetch_sitemap(session, u), args, pool,
+                        session.relaunch))
+                if sitemap_blocked:
+                    return finish_run(
+                        [], args.out, args.format, args.allow_empty,
+                        blocked=True, stop_reason="blocked_sitemap",
+                        pages_requested=args.pages, pages_completed=0,
+                        mode=args.mode, source=SOURCE_DEFAULT,
+                        start_url=args.url or "", final_url="")
                 total_enumerated = len(offer_slugs)
                 if not offer_slugs:
                     # Nothing to fetch, so nothing is written — `save`
@@ -1619,7 +1684,8 @@ def scrape(args) -> int:
             first_verdict = page_flow.queue_decision(first.state, None,
                                                      independent)
             if not first.ok:
-                stop_reason = ("page_load_timeout" if first.load_failed
+                stop_reason = (("proxy_unreachable" if first.proxy_failed
+                                       else "page_load_timeout") if first.load_failed
                                else f"blocked_{first.blocked_by}")
                 blocked = first.blocked_by is not None
             elif first_verdict:
@@ -1671,7 +1737,8 @@ def scrape(args) -> int:
                     failed = [o for o in rest if not o.ok]
                     if failed:
                         worst = min(failed, key=lambda o: o.page_num)
-                        stop_reason = ("page_load_timeout" if worst.load_failed
+                        stop_reason = (("proxy_unreachable" if worst.proxy_failed
+                                       else "page_load_timeout") if worst.load_failed
                                        else f"blocked_{worst.blocked_by}")
                         blocked = any(o.blocked_by for o in rest)
                     elif exhausted:
@@ -1701,7 +1768,8 @@ def scrape(args) -> int:
                             break
                         outcomes.append(outcome)
                         if not outcome.ok:
-                            stop_reason = ("page_load_timeout" if outcome.load_failed
+                            stop_reason = (("proxy_unreachable" if outcome.proxy_failed
+                                       else "page_load_timeout") if outcome.load_failed
                                            else f"blocked_{outcome.blocked_by}")
                             blocked = outcome.blocked_by is not None
                             break

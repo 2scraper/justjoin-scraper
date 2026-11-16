@@ -270,15 +270,15 @@ WORKING_TIMES = ("full_time", "part_time", "internship", "freelance",
                  "b2b_contract")
 
 # The site's own category keys from `/offers/categories/count` on
-# 2026-09-18 (a 2026-11-12 run saw 24: `html` is no longer served, so it is
-# a hint that can go stale, never a gate). Kept as a hint for `--category`'s help text and for a
+# 2026-09-18, minus `html`, which `--mode facets` no longer returned on
+# 2026-11-12 (24 keys). It is a hint that can go stale, never a gate). Kept as a hint for `--category`'s help text and for a
 # suggestion when a user misspells one; NOT as a gate, because the site can
 # add a category and refusing an unknown one would be this repo deciding
 # what justjoin.it sells.
 CATEGORY_KEYS = ("data", "java", "analytics", "pm", "devops", "erp",
                  "architecture", "testing", "ai", "security", "other",
                  "python", "net", "admin", "javascript", "support", "mobile",
-                 "c", "ux", "php", "go", "game", "scala", "ruby", "html")
+                 "c", "ux", "php", "go", "game", "scala", "ruby")
 
 # `itemsCount=2000` is HTTP 400; 1000 is served.
 MAX_ITEMS_COUNT = 1000
@@ -2194,6 +2194,19 @@ def args_problem(args) -> Optional[str]:
                 "in 'came back as unknown' and exit 4 on a perfectly healthy "
                 "site — a 'nothing found' for a fetch that never happened. "
                 "Use 1 for a single attempt.")
+
+    category = getattr(args, "category", None)
+    if category and category.lower() not in CATEGORY_KEYS:
+        import difflib
+        close = difflib.get_close_matches(category.lower(), CATEGORY_KEYS, n=2)
+        # A warning, not a refusal: the site can add a category, and this
+        # list is a dated snapshot. But a misspelling and an empty category
+        # both end as "0 offers", and only one of them is the site's answer.
+        log.warning("--category %r is not one of the 24 keys seen on "
+                    "2026-11-12%s. If the run finds 0 offers, check the "
+                    "spelling (--mode facets lists the current keys).",
+                    category, " — did you mean %s?" % " or ".join(close)
+                    if close else "")
 
     pages = getattr(args, "pages", None)
     if pages is not None and pages < 1:

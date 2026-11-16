@@ -2255,8 +2255,10 @@ def check_category_is_a_filter_and_not_the_run_label():
     equal("and is read back out", pp.category_from_url(url), "devops")
     check("the site's own keys are offered in the help text",
           "devops" in pp.CATEGORY_KEYS and "python" in pp.CATEGORY_KEYS)
-    equal("25 of them were published when this was measured",
-          len(pp.CATEGORY_KEYS), 25)
+    equal("24 are known: 25 were published on 2026-09-18 and `html` was gone "
+          "on 2026-11-12", len(pp.CATEGORY_KEYS), 24)
+    check("a key the site dropped is not offered",
+          "html" not in pp.CATEGORY_KEYS)
 
 
 def check_the_ordering_vocabulary_is_the_request_not_the_payload():
@@ -4459,6 +4461,254 @@ def check_audit_offer_queue_runs_concurrently():
     equal("every offer fetched", len(fetched), 5)
     equal("exit 0", code, 0)
     equal("all five written", (meta or {}).get("products"), 5)
+
+
+def _proxy_with_login(scheme, user, password, hostport):
+    # Assembled at run time so no credential-shaped URL sits in the source.
+    return scheme + "://" + user + ":" + password + "@" + hostport
+
+
+def check_audit_a_refused_proxy_login_is_named():
+    """A proxy that answers 407 to CONNECT is reported as such, quickly."""
+    import socket
+    import threading
+    import proxy_pool
+
+    def serve(reply):
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+
+        def run():
+            try:
+                conn, _ = srv.accept()
+                conn.recv(1024)
+                conn.sendall(reply)
+                conn.close()
+            finally:
+                srv.close()
+        threading.Thread(target=run, daemon=True).start()
+        return srv.getsockname()[1]
+    port = serve(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
+    try:
+        proxy_pool.verify_credentials(
+            _proxy_with_login("http", "u", "WRONGPW", "127.0.0.1:%d" % port), timeout=5)
+        check("a 407 raises", False)
+    except proxy_pool.ProxyError as e:
+        text = str(e)
+        check("the 407 is named", "407" in text, text)
+        check("the password is not in the message", "WRONGPW" not in text,
+              text)
+    port = serve(b"HTTP/1.1 200 Connection established\r\n\r\n")
+    proxy_pool.verify_credentials(
+        _proxy_with_login("http", "u", "p", "127.0.0.1:%d" % port), timeout=5)
+    check("a 200 passes", True)
+    proxy_pool.verify_credentials(
+        _proxy_with_login("http", "u", "p", "127.0.0.1:1"), timeout=2)
+    check("an unreachable proxy is left to the engine", True)
+    proxy_pool.verify_credentials(
+        _proxy_with_login("socks5", "u", "p", "127.0.0.1:1"))
+    check("a non-HTTP scheme is not probed", True)
+    for module in ENGINES:
+        source = open(os.path.join(HERE, module + ".py"),
+                      encoding="utf-8").read()
+        check("%s checks the proxy login before launching" % module,
+              "verify_credentials(pool.current)" in source)
+
+
+def check_audit_a_misspelt_category_is_flagged():
+    import logging
+    records = []
+
+    class Catch(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+    handler = Catch()
+    pp.log.addHandler(handler)
+    try:
+        args = _types.SimpleNamespace(mode="listings", category="pythonx",
+                                      retries=1, pages=1, url=None)
+        pp.args_problem(args)
+        args.category = "python"
+        pp.args_problem(args)
+    finally:
+        pp.log.removeHandler(handler)
+    check("pythonx is flagged with the near miss",
+          any("pythonx" in m and "python" in m for m in records), records)
+    equal("python is not flagged", len(records), 1)
+
+
+def check_audit_pyppeteer_launch_failure_gets_a_hint():
+    engine = _import_engine("puppeteer_scraper")
+    if engine is None:
+        return
+    source = open(os.path.join(HERE, "puppeteer_scraper.py"),
+                  encoding="utf-8").read()
+    check("a BrowserError is caught at the entry point",
+          "except BrowserError as e:" in source)
+    check("and the message names --chromium-path",
+          "Pass --chromium-path" in source)
+
+
+def check_audit_a_refused_sitemap_rotates_the_exit_and_ends_as_blocked():
+    import proxy_pool
+    ns = _types.SimpleNamespace(slugs_file=None, proxy_block_retries=2)
+
+    def run(blocked_urls):
+        pool = proxy_pool.ProxyPool(["http://127.0.0.1:1", "http://127.0.0.1:2",
+                                     "http://127.0.0.1:3"], rotate="per-run")
+        relaunches = []
+
+        def fetch(url):
+            if url.endswith(".xml") and pool.current in blocked_urls:
+                raise page_flow.SitemapBlocked("HTTP 403")
+            return SITEMAP_INDEX_XML if "active-jobs.xml" in url \
+                else SITEMAP_PART_XML
+        out = page_flow.enumerate_offers_resilient(
+            fetch, ns, pool, lambda: relaunches.append(pool.current))
+        return out, relaunches
+    (slugs, blocked, tried), relaunches = run({"http://127.0.0.1:1"})
+    check("one refused exit of three: the slugs arrive", bool(slugs))
+    equal("...from the second exit", (blocked, tried, len(relaunches)),
+          (False, 2, 1))
+    (slugs, blocked, tried), relaunches = run(
+        {"http://127.0.0.1:1", "http://127.0.0.1:2", "http://127.0.0.1:3"})
+    equal("every exit refused: blocked, nothing enumerated",
+          (slugs, blocked, tried), ([], True, 3))
+    # The classifier itself.
+    for status, text, want in ((403, "", True), (429, "", True),
+                               (200, "<title>Just a moment...</title>", True),
+                               (200, SITEMAP_PART_XML, False)):
+        try:
+            page_flow.raise_if_sitemap_blocked(status, text)
+            got = False
+        except page_flow.SitemapBlocked:
+            got = True
+        equal("status %s %r is %s" % (status, text[:20],
+                                      "refused" if want else "served"),
+              got, want)
+    # And through each engine's own loop: exit 3, not `enumeration_empty`.
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        ran += 1
+        real = engine._fetch_sitemap
+
+        def refuse(session, url, timeout_ms=60000):
+            raise page_flow.SitemapBlocked("HTTP 403")
+        engine._fetch_sitemap = refuse
+        try:
+            code, fetched, meta = _drive_scrape(
+                engine, ["--mode", "offer", "--pages", "2"],
+                lambda url: ("content", ["x"]))
+        finally:
+            engine._fetch_sitemap = real
+        equal("%s: a refused sitemap is exit 3" % module, code, 3)
+        check("%s: and, with no rows, writes no sidecar over a good run"
+              % module, meta is None)
+    if ran == 0:
+        skip("blocked sitemap", "no engine library installed here")
+
+
+def check_audit_a_challenge_page_on_the_endpoint_route_is_blocked():
+    """The endpoint route reads `innerText`, which has no title and no
+    scripts. A challenge answered with HTTP 200 and no marker in its text was
+    `unknown` (exit 4/5), and a real refusal was saved as 41 bytes of text."""
+    html = ("<html><head><title>Just a moment...</title></head><body>"
+            "<script src=\"/cdn-cgi/challenge-platform/h/b/orchestrate\">"
+            "</script>Performing security verification</body></html>")
+    check("the fixture is a recognised challenge",
+          pp.detect_bot_challenge(html) is not None)
+    api_url = pp.api_url(items=100)
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        ran += 1
+        if module == "selenium_scraper":
+            session = _types.SimpleNamespace(
+                driver=_types.SimpleNamespace(page_source=html))
+        elif module == "puppeteer_scraper":
+            session = _types.SimpleNamespace(
+                bridge=_types.SimpleNamespace(run=lambda x: x),
+                page=_types.SimpleNamespace(content=lambda: html))
+        else:
+            session = _types.SimpleNamespace(
+                page=_types.SimpleNamespace(content=lambda: html))
+        text = "Performing security verification"
+        state, body = engine._markup_view(session, api_url, "unknown", text)
+        equal("%s: unknown + a marker in the markup is blocked" % module,
+              state, "blocked")
+        equal("%s: and the markup is what gets saved" % module, body, html)
+        state, body = engine._markup_view(session, api_url, "content", text)
+        equal("%s: a served page is left alone" % module,
+              (state, body), ("content", text))
+        state, body = engine._markup_view(
+            session, "https://justjoin.it/job-offers/all-locations",
+            "unknown", text)
+        equal("%s: a rendered listing already has its markup" % module,
+              (state, body), ("unknown", text))
+    if ran == 0:
+        skip("markup view", "no engine library installed here")
+
+
+def check_audit_a_dead_proxy_is_named_in_the_outcome():
+    engine = _import_engine("playwright_scraper")
+    if engine is None:
+        return
+    import proxy_pool
+
+    class Page:
+        url = "about:blank"
+
+        def goto(self, *a, **k):
+            raise engine.PWError("net::ERR_PROXY_CONNECTION_FAILED at x")
+    session = _types.SimpleNamespace(page=Page(), pool=None)
+    args = _types.SimpleNamespace(
+        retries=1, retry_delay=0, proxy_block_retries=0, pages=1,
+        mode="listings", route="api", out="unused", dump_html=None)
+    pool = proxy_pool.ProxyPool(["http://127.0.0.1:1"], rotate="per-run")
+    outcome = engine._fetch_one_page(session, args, pool, 1,
+                                     pp.api_url(items=100))
+    check("the load failed", outcome.load_failed)
+    equal("and the proxy is what is named", outcome.proxy_failed,
+          "ERR_PROXY_CONNECTION_FAILED")
+    for module in ENGINES:
+        source = open(os.path.join(HERE, module + ".py"),
+                      encoding="utf-8").read()
+        check("%s reports proxy_unreachable rather than a timeout" % module,
+              '"proxy_unreachable"' in source
+              and "outcome.proxy_failed = exit_failed" in source)
+
+
+def check_audit_a_paid_recaptcha_token_is_not_discarded_by_a_reload():
+    import captcha_solver as cs
+    check("the injector reports how many callbacks it called",
+          "return called;" in cs.INJECT_TOKEN_JS)
+    check("a form-submit helper exists", "requestSubmit" in
+          cs.SUBMIT_RECAPTCHA_FORM_JS)
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        src = inspect.getsource(engine.handle_captcha_if_present)
+        check("%s submits the form instead of reloading" % module,
+              "SUBMIT_RECAPTCHA_FORM_JS" in src, module)
+        if module != "playwright_scraper":
+            # Playwright keeps one reload, for Turnstile, whose cookie
+            # survives it; the other two engines have no Turnstile branch.
+            check("%s has no reload after the token is in" % module,
+                  "reload(" not in src and "refresh(" not in src, module)
+    source = open(os.path.join(HERE, "puppeteer_scraper.py"),
+                  encoding="utf-8").read()
+    check("puppeteer answers the proxy's 407 over Fetch, not "
+          "page.authenticate (needs a CDP method current Chromium lacks)",
+          "self.page.authenticate(" not in source
+          and "Fetch.authRequired" in source
+          and "_install_proxy_auth(" in source)
 
 
 CHECKS = [v for k, v in sorted(globals().items()) if k.startswith("check_")]
