@@ -514,6 +514,11 @@ CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 def _csv_cell(v: Any) -> Tuple[Any, bool]:
     v = _csv_value(v)
     if isinstance(v, str) and v.startswith(CSV_FORMULA_PREFIXES):
+        # A lone "-" is the site's placeholder for "no street" (53 cells in
+        # 300 rows) and cannot be a formula; "-5" would be a number and "-1+2"
+        # is not worth the exception, so only the bare dash is spared.
+        if v.strip() == "-":
+            return v, False
         return "'" + v, True
     return v, False
 
@@ -832,6 +837,9 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # one page so a run should never reach it, and it is left in so that a route
 # which starts clamping is noticed rather than silently re-collected.
 #
+# "queue_exhausted": `--mode offer` fetched every offer it was given, and the
+# queue was shorter than `--pages`. It is not the site's page cap.
+#
 # "single_page_route" is complete by construction for the two routes that
 # have one page: `--mode facets` is one request, and `--route ssr` serves
 # one page and ignores `?page=N`.
@@ -844,7 +852,7 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # the other.
 COMPLETE_STOP_REASONS = ("completed", "pagination_exhausted", "no_new_products",
                          "page_cap_reached", "page_echo_mismatch",
-                         "single_page_route")
+                         "single_page_route", "queue_exhausted")
 
 
 def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
@@ -889,8 +897,14 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
     wrote_output = bool(rows) or allow_empty
 
     if wrote_output:
-        status = "complete" if (rows and complete) else (
-            "partial" if rows else "failed")
+        if rows:
+            status = "complete" if complete else "partial"
+        elif allow_empty and complete:
+            # The caller declared that an empty result is a valid answer, so
+            # a finished run with nothing in it is not a failure.
+            status = "complete"
+        else:
+            status = "failed"
         write_run_meta(out_prefix, run_meta(
             status=status, stop_reason=stop_reason,
             pages_requested=pages_requested, pages_completed=pages_completed,

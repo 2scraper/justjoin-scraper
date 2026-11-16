@@ -74,6 +74,7 @@ face.
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import sys
@@ -476,6 +477,25 @@ def _check_comparable(args) -> bool:
                 f"`added` and `removed` would describe the filter change "
                 f"rather than the board.")
 
+    # The route changes which rows exist and which columns are filled: the
+    # rendered page is ONE page of about 50 rows and publishes no `applyUrl`,
+    # so an api run against an ssr run reports the missing pages as `removed`
+    # and every apply_url as `changed`. `scraper_api` reads the same endpoint
+    # as `api`, so those two stay comparable.
+    routes = {}
+    for label, path in (("--old", args.old), ("--new", args.new)):
+        _, meta = _run_status(path)
+        route = (meta or {}).get("route")
+        if route:
+            routes[label] = "api" if route == "scraper_api" else route
+    if len(routes) == 2 and routes["--old"] != routes["--new"]:
+        problems.append(
+            f"the two runs read different routes (old={routes['--old']}, "
+            f"new={routes['--new']}). The rendered listing is one page of "
+            f"about 50 rows without an apply_url, so the difference would be "
+            f"reported as `removed` rows and changed apply_url values rather "
+            f"than as anything that happened on the board.")
+
     # And whether either run was CAPPED, which changes what `removed` means.
     for label, path in (("--old", args.old), ("--new", args.new)):
         _, meta = _run_status(path)
@@ -488,6 +508,14 @@ def _check_comparable(args) -> bool:
                   f"and a slice. A `removed` line may mean the slice moved "
                   f"rather than that an offer was taken down. Use --pages "
                   f"{enumerated} on both runs to compare a full census.")
+        share = meta.get("share_of_query_pct")
+        if (meta.get("mode") == "listings" and not meta.get("capped_by_site")
+                and isinstance(share, (int, float)) and share < 100):
+            print(f"[i] {label} ({path}) took {share}% of its query — a "
+                  f"complete run, and a slice. A `removed` line may mean a "
+                  f"newer posting pushed the offer past the last page "
+                  f"fetched rather than that it was taken down. Fetch every "
+                  f"page on both runs to compare a full census.")
         if meta.get("capped_by_site"):
             # The third meaning of `removed`. A capped run
             # holds a moving window over a board that is published to
@@ -539,6 +567,10 @@ def parse_args():
 
 def main() -> int:
     args = parse_args()
+    for label, path in (("--old", args.old), ("--new", args.new)):
+        if not os.path.isfile(path):
+            print(f"[!] {label} {path}: no such file.")
+            return 2
     if not args.force and not _check_comparable(args):
         return 2
 

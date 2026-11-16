@@ -135,6 +135,7 @@ from __future__ import annotations
 
 import base64
 import re
+import threading
 import time
 import logging
 from dataclasses import dataclass
@@ -881,6 +882,19 @@ def _solve_with_2captcha_v1(api_key: str, challenge: CaptchaChallenge,
     raise TimeoutError("2captcha.com did not return a token in time")
 
 
+# Purchases STARTED by this thread. `solve_recaptcha` is the one place a paid
+# task is created, so a caller that wants "how many did I buy" reads the
+# difference across its call. Counting at the call site instead (before it
+# knew whether there was anything to solve) charged the page's one-solve
+# allowance for a no-op check, and a challenge that appeared a step later was
+# then refused although nothing had been bought.
+_attempts = threading.local()
+
+
+def solve_attempts() -> int:
+    return getattr(_attempts, "n", 0)
+
+
 def solve_recaptcha(challenge: CaptchaChallenge, twocaptcha_api_key: Optional[str],
                      api_version: str = "v2", min_score: float = 0.7) -> str:
     """Public entry point: solve `challenge` through 2captcha and return the token.
@@ -909,6 +923,7 @@ def solve_recaptcha(challenge: CaptchaChallenge, twocaptcha_api_key: Optional[st
             "Turnstile is only implemented on the v2 API here. Drop "
             "--captcha-api v1 (v2 is the default) to solve it.")
     solver = _solve_with_2captcha_v1 if api_version == "v1" else _solve_with_2captcha_v2
+    _attempts.n = solve_attempts() + 1
     return solver(twocaptcha_api_key, challenge, min_score=min_score)
 
 
@@ -1161,20 +1176,41 @@ INJECT_TOKEN_JS = """
   }
   el.value = token;
   el.innerHTML = token;
+  let called = 0;
   try {
     if (window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients) {
       Object.values(window.___grecaptcha_cfg.clients).forEach((client) => {
         Object.values(client).forEach((prop) => {
           if (prop && typeof prop === 'object') {
             Object.values(prop).forEach((cb) => {
-              if (typeof cb === 'function') { try { cb(token); } catch (e) {} }
+              if (typeof cb === 'function') {
+                try { cb(token); called += 1; } catch (e) {}
+              }
             });
           }
         });
       });
     }
   } catch (e) { /* best effort, non-fatal */ }
-  return true;
+  return called;
+}
+"""
+
+# Submits the form that holds the token field, WITHOUT reloading. A reload
+# discards `g-recaptcha-response` (verified on Google's reCAPTCHA demo: the
+# field was empty after `reload()` and the form failed; with the token left in
+# place it passed), so the engines inject, let the page's own callback run or
+# submit this form, and carry on from the page as it is. Returns whether a
+# form was submitted.
+SUBMIT_RECAPTCHA_FORM_JS = """
+() => {
+  const el = document.getElementById('g-recaptcha-response');
+  const form = el && el.form;
+  if (!form) return false;
+  try {
+    if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
+    return true;
+  } catch (e) { return false; }
 }
 """
 

@@ -31,9 +31,9 @@ during development shouldn't re-bill every time.
 Chromium-format response (the fields this module actually uses):
     id, country,
     screen:            {width, height}
-    userAgent:         {value}
+    userAgent:         {userAgent}
     navigator:         {platform, hardwareConcurrency, deviceMemory}
-    webgl:             {vendor, renderer}
+    webgl:             {glParameters: {"37445": vendor, "37446": renderer}}
     speechSynthesis:   {voices: [...]}
 
 What can and cannot be applied
@@ -282,6 +282,30 @@ def playwright_context_kwargs(fp: dict) -> dict:
     return kwargs
 
 
+def cdp_emulation(fp: dict) -> dict:
+    """What Selenium and Puppeteer must set over CDP, because they have no
+    `new_context(screen=..., timezone_id=...)` the way Playwright does.
+
+    `metrics` is the argument of `Emulation.setDeviceMetricsOverride` and
+    `timezone` of `Emulation.setTimezoneOverride`; either is absent when the
+    fingerprint does not state it. The numbers are the ones
+    `playwright_context_kwargs` uses, so the engines present one identity.
+    """
+    out: dict = {}
+    kwargs = playwright_context_kwargs(fp)
+    viewport, screen = kwargs.get("viewport"), kwargs.get("screen")
+    if viewport and screen:
+        out["metrics"] = {
+            "width": viewport["width"], "height": viewport["height"],
+            "screenWidth": screen["width"], "screenHeight": screen["height"],
+            "deviceScaleFactor": kwargs.get("device_scale_factor", 1.0),
+            "mobile": False,
+        }
+    if kwargs.get("timezone_id"):
+        out["timezone"] = kwargs["timezone_id"]
+    return out
+
+
 def playwright_init_script(fp: dict) -> str:
     """JS to run before page scripts, patching what Playwright can't set.
 
@@ -290,12 +314,19 @@ def playwright_init_script(fp: dict) -> str:
     """
     nav = fp.get("navigator") or {}
     webgl = fp.get("webgl") or {}
+    # The `chromium` format keeps the strings under webgl.glParameters, keyed
+    # by the GL enum (37445 = UNMASKED_VENDOR, 37446 = UNMASKED_RENDERER);
+    # `webgl.vendor`/`.renderer` are the older spelling and stay as fallback.
+    # Reading only the old keys left both null, so nothing was patched and a
+    # Windows fingerprint reported the host's own GPU.
+    gl = webgl.get("glParameters")
+    gl = gl if isinstance(gl, dict) else {}
     payload = json.dumps({
         "platform": nav.get("platform"),
         "hardwareConcurrency": nav.get("hardwareConcurrency"),
         "deviceMemory": nav.get("deviceMemory"),
-        "webglVendor": webgl.get("vendor"),
-        "webglRenderer": webgl.get("renderer"),
+        "webglVendor": gl.get("37445") or webgl.get("vendor"),
+        "webglRenderer": gl.get("37446") or webgl.get("renderer"),
     })
     return """
 (() => {
@@ -359,8 +390,9 @@ def main() -> int:
     p.add_argument("--tags", default=None, metavar="TAG",
                    help="ONE OS-family tag, not a list: Windows, "
                         "Microsoft Windows or Android. Chrome/Desktop/Mobile "
-                        "are rejected by the API with 400, and no combination "
-                        "is accepted. Use --country to narrow further.")
+                        "were each accepted by the API on 2026-11-12; "
+                        "combinations are not tried. Use --country to narrow "
+                        "further.")
     p.add_argument("--country", default=None, help="ISO 3166-1 alpha-2, e.g. us")
     p.add_argument("--min-browser-version", type=int, default=None)
     p.add_argument("--browser-version", type=int, default=None)

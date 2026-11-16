@@ -141,6 +141,7 @@ from __future__ import annotations
 
 import html as _html
 import json
+import os
 import re
 import urllib.parse
 from dataclasses import dataclass, field
@@ -194,7 +195,7 @@ DEFAULT_MODE = "listings"
 # `--route` applies to `--mode listings` only.
 #
 #   api  the endpoint. Every page, every filter, offset pagination.
-#   ssr  the rendered listing page's flight payload. ONE page of 100 rows
+#   ssr  the rendered listing page's flight payload. ONE page of about 50 rows
 #        with a poorer schema — and the only route `robots.txt` permits
 #        (see ROBOTS_NOTE). Kept because a reader who wants to stay inside
 #        robots.txt should not have to fork this repo to do it.
@@ -207,10 +208,10 @@ DEFAULT_ROUTE = "api"
 # prefix. It is the site's own front end calling its own origin rather than
 # a crawler enumerating URLs, and it is stated plainly in the README rather
 # than left for a reader to find — with `--route ssr` there for anyone who
-# would rather take the 100 rows robots.txt invites.
+# would rather take the 50 rows robots.txt invites.
 ROBOTS_NOTE = ("justjoin.it's robots.txt disallows /api/, which is where "
                "the offers endpoint lives. --route ssr reads the rendered "
-               "listing page instead (100 rows, one page).")
+               "listing page instead (about 50 rows, one page).")
 
 # ---------------------------------------------------------------------------
 # The endpoint's own vocabulary
@@ -268,15 +269,16 @@ EMPLOYMENT_TYPES = ("b2b", "permanent", "mandate_contract", "contract",
 WORKING_TIMES = ("full_time", "part_time", "internship", "freelance",
                  "b2b_contract")
 
-# The site's own 25 category keys, from `/offers/categories/count` on
-# 2026-09-18. Kept as a hint for `--category`'s help text and for a
+# The site's own category keys from `/offers/categories/count` on
+# 2026-09-18, minus `html`, which `--mode facets` no longer returned on
+# 2026-11-12 (24 keys). It is a hint that can go stale, never a gate). Kept as a hint for `--category`'s help text and for a
 # suggestion when a user misspells one; NOT as a gate, because the site can
 # add a category and refusing an unknown one would be this repo deciding
 # what justjoin.it sells.
 CATEGORY_KEYS = ("data", "java", "analytics", "pm", "devops", "erp",
                  "architecture", "testing", "ai", "security", "other",
                  "python", "net", "admin", "javascript", "support", "mobile",
-                 "c", "ux", "php", "go", "game", "scala", "ruby", "html")
+                 "c", "ux", "php", "go", "game", "scala", "ruby")
 
 # `itemsCount=2000` is HTTP 400; 1000 is served.
 MAX_ITEMS_COUNT = 1000
@@ -759,11 +761,60 @@ def filters_from_listing_url(url: str) -> Filters:
         if len(segments) > 1:
             category = segments[1].lower()
     keyword = None
+    experience: List[str] = []
+    employment: List[str] = []
     for key, value in urllib.parse.parse_qsl(query):
         if key in ("keyword", "keywords") and value:
             keyword = value
+        elif key == "experience-level":
+            experience += [v for v in value.split(",") if v]
+        elif key == "employment-type":
+            employment += [v for v in value.split(",") if v]
     return Filters(city=city, category=category, remote=remote,
-                   keyword=keyword)
+                   keyword=keyword, experience=experience or None,
+                   employment=employment or None)
+
+
+# Query parameters of a browsable listing URL that `filters_from_listing_url`
+# turns into endpoint filters. Anything else on such a URL (the site writes
+# `remote=yes`, `working-time=...` and others when a filter is ticked) used to
+# be dropped without a word, so the run looked filtered and was not.
+LISTING_URL_PARAMS = ("keyword", "keywords", "experience-level",
+                      "employment-type")
+
+
+def listing_url_problem(url: str) -> Optional[str]:
+    """Why a browsable listing URL cannot be honoured, or None."""
+    if not url or route_of(url) != "listing":
+        return None
+    _, _, _, query = _split_url(url)
+    unknown = []
+    bad = []
+    for key, value in urllib.parse.parse_qsl(query):
+        if key not in LISTING_URL_PARAMS:
+            if key not in unknown:
+                unknown.append(key)
+        elif key == "experience-level":
+            bad += [v for v in value.split(",")
+                    if v and v not in EXPERIENCE_LEVELS]
+        elif key == "employment-type":
+            bad += [v for v in value.split(",")
+                    if v and v not in EMPLOYMENT_TYPES]
+    if unknown:
+        return ("--url carries the query parameter%s %s, which this scraper "
+                "does not translate into an endpoint filter, so the run would "
+                "quietly not be narrowed by %s. Supported on a listing URL: "
+                "%s. Use the matching flags (--remote, --working-time, "
+                "--with-salary, ...) instead."
+                % ("" if len(unknown) == 1 else "s", ", ".join(unknown),
+                   "it" if len(unknown) == 1 else "them",
+                   ", ".join(LISTING_URL_PARAMS)))
+    if bad:
+        return ("--url names %s, which is not a value the endpoint filters "
+                "on. Valid experience levels: %s; employment types: %s."
+                % (", ".join(bad), ", ".join(EXPERIENCE_LEVELS),
+                   ", ".join(EMPLOYMENT_TYPES)))
+    return None
 
 
 def page_url(url: str, page: int) -> Optional[str]:
@@ -2074,9 +2125,9 @@ def filters_from_args(args) -> Filters:
         city_radius=args.city_radius,
         remote=("remote" if args.remote else from_url.remote),
         keyword=args.keyword or from_url.keyword,
-        experience=args.experience or None,
+        experience=args.experience or from_url.experience,
         language=args.language or None,
-        employment=args.employment or None,
+        employment=args.employment or from_url.employment,
         working_time=args.working_time or None,
         with_salary=bool(args.with_salary),
     )
@@ -2144,6 +2195,42 @@ def args_problem(args) -> Optional[str]:
                 "site — a 'nothing found' for a fetch that never happened. "
                 "Use 1 for a single attempt.")
 
+    category = getattr(args, "category", None)
+    if category and category.lower() not in CATEGORY_KEYS:
+        import difflib
+        close = difflib.get_close_matches(category.lower(), CATEGORY_KEYS, n=2)
+        # A warning, not a refusal: the site can add a category, and this
+        # list is a dated snapshot. But a misspelling and an empty category
+        # both end as "0 offers", and only one of them is the site's answer.
+        log.warning("--category %r is not one of the 24 keys seen on "
+                    "2026-11-12%s. If the run finds 0 offers, check the "
+                    "spelling (--mode facets lists the current keys).",
+                    category, " — did you mean %s?" % " or ".join(close)
+                    if close else "")
+
+    pages = getattr(args, "pages", None)
+    if pages is not None and pages < 1:
+        return ("--pages must be at least 1 (it is how many pages to fetch); "
+                "%d used to be accepted and fetched one page anyway."
+                % pages)
+
+    problem = listing_url_problem(getattr(args, "url", None))
+    if problem:
+        return problem
+
+    slugs_file = getattr(args, "slugs_file", None)
+    if slugs_file and not os.path.isfile(slugs_file):
+        return "--slugs-file %s does not exist." % slugs_file
+
+    out = getattr(args, "out", None)
+    if out:
+        out_dir = os.path.dirname(os.path.abspath(out))
+        if not os.path.isdir(out_dir):
+            return ("--out %s: the directory %s does not exist. Checked "
+                    "before the first request, because a run that finds out "
+                    "at the write has already fetched everything."
+                    % (out, out_dir))
+
     used = [name for name, value in (
         ("--category", getattr(args, "category", None)),
         ("--city", getattr(args, "city", None)),
@@ -2173,6 +2260,13 @@ def args_problem(args) -> Optional[str]:
     unsupported = [name for name in used
                    if name not in ("--category", "--city", "--keyword",
                                    "--remote")]
+    url_filters = (filters_from_listing_url(args.url)
+                   if getattr(args, "url", None)
+                   and route_of(args.url) == "listing" else Filters())
+    if url_filters.experience:
+        unsupported.append("--url experience-level=")
+    if url_filters.employment:
+        unsupported.append("--url employment-type=")
     if getattr(args, "city_radius", 30) not in (None, 30):
         unsupported.append("--city-radius")
     if getattr(args, "sort", DEFAULT_SORT) != DEFAULT_SORT:

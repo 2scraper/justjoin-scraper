@@ -201,7 +201,9 @@ def apply(args, keys=None, quiet=False):
     for env_name, dest in (keys or ENV_KEYS).items():
         if not hasattr(args, dest):
             continue
-        if getattr(args, dest):
+        # `is not None`, not truthiness: an explicit empty flag (`--proxy ""`)
+        # is the user switching a paid path off, and must beat the .env value.
+        if getattr(args, dest) is not None:
             continue
         value = env_value(env_name)
         if value:

@@ -58,7 +58,9 @@ import requests
 from product_parser import (BOT_CHALLENGE_MARKERS, MODES, DEFAULT_MODE,
                             detect_bot_challenge, detect_page_state,
                             parse_page, parse_detail_response,
-                            ROUTES, DEFAULT_ROUTE, missing_facet_groups)
+                            ROUTES, DEFAULT_ROUTE, missing_facet_groups,
+                            route_of, is_supported_url, slug_from_url,
+                            detail_api_url, facets_api_url)
 from output_writer import SOURCE_DEFAULT, finish_run
 import env_config
 import page_flow
@@ -319,11 +321,12 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
         logger.error(
             "The Scraper API delivered, but what it rendered is %r — upstream "
             "HTTP %s, %d bytes, saved to %s. That is NOT an empty result: "
-            "nothing here says the board has no jobs on it. This site's own "
-            "endpoint (/api/candidate-api/offers) is a few tens of KB and "
-            "renders reliably; its listing PAGE is 1.8 MB and timed out at "
-            "the default 60s. Point --url at the endpoint, raise --timeout, "
-            "or use playwright_scraper.py, which fetches it directly.",
+            "nothing here says the board has no jobs on it. Check the saved "
+            "file for what came back. If it is a timeout or an empty body, "
+            "the endpoint (/api/candidate-api/offers) is a few tens of KB "
+            "and renders more reliably than the 1.8 MB listing page; raise "
+            "--timeout or use playwright_scraper.py, which fetches it "
+            "directly.",
             state, upstream_status, len(html), dump)
         return EXIT_API_ERROR
 
@@ -361,7 +364,8 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
     # was complete, which is exactly the evidence `diff_runs.py` needs and
     # used to wave through when it was absent.
     stop_reason = "single_page_route"
-    extra = {"route": "scraper_api", "mode": args.mode}
+    extra = {"route": ("scraper_api" if getattr(args, "route", DEFAULT_ROUTE) == "api"
+                       else args.route), "mode": args.mode}
     if args.mode == "facets":
         # One request, so the category counts (their own endpoint) are never
         # part of this body: the run is partial by construction, and says so.
@@ -383,15 +387,15 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="justjoin.it scraper — 2captcha Scraper API edition (no local "
-                    "browser). Built for --mode profile, which is one "
-                    "server-rendered page and a good fit. NOT the way to "
-                    "browser needed). What decides success is the EXIT: "
-                    "ordinary HTTPS request with no key and no proxy, so "
-                    "paying for a rendered page there buys nothing. "
-                    "--cdp-url is REQUIRED — the Scraper API's own exits are "
-                    "datacenter addresses and justjoin.it refuses them — it does "
-                    "not, as measured.")
+        description="justjoin.it scraper — 2captcha Scraper API edition (no "
+                    "local browser). Reads the offers endpoint "
+                    "(/api/candidate-api/offers..., one offer, or the facets "
+                    "count) or a rendered listing page (/job-offers/...). "
+                    "justjoin.it serves every route to a bare datacentre "
+                    "address with no account (measured 2026-09-18), so this "
+                    "client buys someone else's infrastructure and an exit "
+                    "country (--cdp-url), not access. What decides success is "
+                    "the EXIT CODE.")
     # NOT required: prefer the TWOCAPTCHA_KEY env var. A key passed on the
     # command line is visible to anyone who can run `ps`, and it lands in
     # shell history and in any log that echoes the command line.
@@ -399,18 +403,21 @@ def parse_args():
                    help="2captcha.com API key (sent as a Bearer token). "
                         "Defaults to $TWOCAPTCHA_KEY, which is the safer way to pass it.")
     p.add_argument("--url", default=None,
-                   help="A justjoin.it URL: a listing page "
-                        "(/job-offers/...) or one offer "
-                        "(/job-offer/{slug}). "
-                        "/jobs, or /jobs/{id}-{slug} with --mode job. Used if "
-                        "endpoint answers that for free. Required, unless "
-                        "JUSTJOIN_URL is set in the environment or .env.")
+                   help="A justjoin.it URL: an endpoint "
+                        "(/api/candidate-api/offers?..., "
+                        "/api/candidate-api/offers/{slug}, "
+                        "/api/candidate-api/offers/facets/count) or a "
+                        "listing page (/job-offers/..., read as the rendered "
+                        "page, ~50 rows). An offer PAGE (/job-offer/{slug}) "
+                        "is refused: use its endpoint. --mode facets "
+                        "defaults to the facets endpoint. Required otherwise, "
+                        "unless JUSTJOIN_URL is set in the environment or "
+                        ".env.")
     p.add_argument("--mode", choices=list(MODES),
                    default=DEFAULT_MODE,
-                   help="Default profile, unlike the browser engines, "
-                        "because a profile is the only page kind this path "
-                        "reads that the free endpoint cannot.")
-    p.add_argument("--category", default=None, help="Label to tag output rows with. Defaults to the category segment of the URL, so the column is never empty just because the flag was omitted.")
+                   help="listings (default), offer (one offer, by its "
+                        "endpoint URL) or facets (the filter taxonomy).")
+    p.add_argument("--category", default=None, help="Label for the run in the .meta.json sidecar. It does not add a column to the rows.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="justjoin_jobs_scraperapi",
                    help="Output file prefix")
@@ -425,7 +432,7 @@ def parse_args():
                            "on protected sites — a DOM/load wait is satisfied instantly by "
                            "the challenge page itself.")
     wait.add_argument("--wait-element", default=None,
-                      help="Wait until this CSS selector is visible, e.g. 'a[href*=\"-item-\"]'")
+                      help="Wait until this CSS selector is visible, e.g. 'a[href^=\"/job-offer/\"]'")
     wait.add_argument("--wait-state", choices=["load", "domcontentloaded"], default=None,
                       help="Wait for a page load state instead of specific content")
     p.add_argument("--allow-empty", action="store_true",
@@ -447,10 +454,43 @@ def parse_args():
         "JUSTJOIN_CDP_ENDPOINT": "cdp_url",
         "JUSTJOIN_URL": "url",
     })
+    if not args.url and args.mode == "facets":
+        args.url = facets_api_url()
     if not args.url:
         p.error("no --url given, and JUSTJOIN_URL is not set in the environment "
                 "or in .env.")
+    problem = _args_problem(args)
+    if problem:
+        # Before any request: every attempt below is a billed task.
+        p.error(problem)
     return args
+
+
+def _args_problem(args) -> Optional[str]:
+    """Why this request cannot be honoured, or None. Sets `args.route`."""
+    ok, reason = is_supported_url(args.url)
+    if not ok:
+        return reason
+    if not 1 <= args.timeout <= MAX_API_TIMEOUT:
+        return "--timeout must be 1-%d seconds (got %d)." % (
+            MAX_API_TIMEOUT, args.timeout)
+    if args.retries < 0:
+        return "--retries cannot be negative."
+    route = route_of(args.url)
+    args.route = DEFAULT_ROUTE
+    if route == "offer":
+        slug = slug_from_url(args.url)
+        hint = detail_api_url(slug) if slug else None
+        return ("%s is an offer PAGE, and this client has no parser for it "
+                "(only the endpoint's JSON). Use %s with --mode offer."
+                % (args.url, hint or "/api/candidate-api/offers/{slug}"))
+    if route == "listing":
+        if args.mode != "listings":
+            return ("%s is a listing page, which --mode %s does not read. "
+                    "Use --mode listings, or the endpoint URL."
+                    % (args.url, args.mode))
+        args.route = "ssr"
+    return None
 
 
 if __name__ == "__main__":
