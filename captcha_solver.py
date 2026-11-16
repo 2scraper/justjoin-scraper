@@ -135,6 +135,7 @@ from __future__ import annotations
 
 import base64
 import re
+import threading
 import time
 import logging
 from dataclasses import dataclass
@@ -881,6 +882,19 @@ def _solve_with_2captcha_v1(api_key: str, challenge: CaptchaChallenge,
     raise TimeoutError("2captcha.com did not return a token in time")
 
 
+# Purchases STARTED by this thread. `solve_recaptcha` is the one place a paid
+# task is created, so a caller that wants "how many did I buy" reads the
+# difference across its call. Counting at the call site instead (before it
+# knew whether there was anything to solve) charged the page's one-solve
+# allowance for a no-op check, and a challenge that appeared a step later was
+# then refused although nothing had been bought.
+_attempts = threading.local()
+
+
+def solve_attempts() -> int:
+    return getattr(_attempts, "n", 0)
+
+
 def solve_recaptcha(challenge: CaptchaChallenge, twocaptcha_api_key: Optional[str],
                      api_version: str = "v2", min_score: float = 0.7) -> str:
     """Public entry point: solve `challenge` through 2captcha and return the token.
@@ -909,6 +923,7 @@ def solve_recaptcha(challenge: CaptchaChallenge, twocaptcha_api_key: Optional[st
             "Turnstile is only implemented on the v2 API here. Drop "
             "--captcha-api v1 (v2 is the default) to solve it.")
     solver = _solve_with_2captcha_v1 if api_version == "v1" else _solve_with_2captcha_v2
+    _attempts.n = solve_attempts() + 1
     return solver(twocaptcha_api_key, challenge, min_score=min_score)
 
 

@@ -43,6 +43,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from captcha_solver import (detect_recaptcha_v3, detect_recaptcha_in_page,
                             reconcile_detections, solve_recaptcha,
+                            solve_attempts,
                             CaptchaUnsolvable, INJECT_TOKEN_JS,
                             RECAPTCHA_DISCOVERY_JS, detect_turnstile,
                             wait_for_turnstile, TURNSTILE_INTERCEPT_JS,
@@ -292,15 +293,25 @@ class _Session:
         self.driver.set_script_timeout(SCRIPT_TIMEOUT)
 
     def _apply_fingerprint(self):
-        from fingerprint_client import get_fingerprint, playwright_init_script
+        from fingerprint_client import (cdp_emulation, get_fingerprint,
+                                        fingerprint_user_agent,
+                                        playwright_init_script)
         fp = get_fingerprint(self.args.twocaptcha_key, tags=self.args.fp_tags,
                              country=self.args.fp_country)
-        ua = (fp.get("userAgent") or {}).get("value")
+        ua = fingerprint_user_agent(fp)
         script = playwright_init_script(fp)
+        emulation = cdp_emulation(fp)
         try:
             if ua:
                 self.driver.execute_cdp_cmd("Network.setUserAgentOverride",
                                             {"userAgent": ua})
+            if "metrics" in emulation:
+                self.driver.execute_cdp_cmd(
+                    "Emulation.setDeviceMetricsOverride", emulation["metrics"])
+            if "timezone" in emulation:
+                self.driver.execute_cdp_cmd(
+                    "Emulation.setTimezoneOverride",
+                    {"timezoneId": emulation["timezone"]})
             # The same patch script the Playwright engine installs on its
             # context. Shared deliberately: two engines applying different
             # halves of one fingerprint would be a contradiction of exactly
@@ -610,8 +621,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         # Counted, because it can BUY. See _solve_budget.
         if _solve_budget(args, solves_bought):
-            solves_bought += 1
-            if handle_captcha_if_present(session, args):
+            attempts_before = solve_attempts()
+            solved = handle_captcha_if_present(session, args)
+            solves_bought += solve_attempts() - attempts_before
+            if solved:
                 time.sleep(1)
 
         elif solves_bought:
@@ -653,8 +666,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # paying for one the API will reject.
         if (page_flow.should_solve(state)
                 and _solve_budget(args, solves_bought)):
-            solves_bought += 1
-            if handle_captcha_if_present(session, args):
+            attempts_before = solve_attempts()
+            solved = handle_captcha_if_present(session, args)
+            solves_bought += solve_attempts() - attempts_before
+            if solved:
                 time.sleep(1)
                 html = d["content"]() or html
                 state = page_flow.classify(html, http_status, d["current_url"](),
@@ -1025,7 +1040,8 @@ def scrape(args) -> int:
             planned = page_flow.plan_page_urls(args, page_one, first.pages_available,
                                       offer_slugs=offer_slugs)
             if len(planned) + 1 < args.pages:
-                stop_reason = "page_cap_reached"
+                stop_reason = ("queue_exhausted" if args.mode == "offer"
+                                   else "page_cap_reached")
 
             for index, url in enumerate(planned):
                 page_num = index + 2
@@ -1033,7 +1049,13 @@ def scrape(args) -> int:
                     pool.advance(f"per-page rotation, page {page_num}")
                     session.relaunch()
 
-                outcome = _fetch_one_page(session, args, pool, page_num, url)
+                try:
+                    outcome = _fetch_one_page(session, args, pool, page_num, url)
+                except KeyboardInterrupt:
+                    logger.warning("Interrupted during page %d — writing the %d "
+                                   "page(s) already fetched.", page_num, len(outcomes))
+                    stop_reason = "interrupted"
+                    break
                 outcomes.append(outcome)
                 if not outcome.ok:
                     stop_reason = ("page_load_timeout" if outcome.load_failed
@@ -1059,7 +1081,11 @@ def scrape(args) -> int:
                     break
 
                 if index + 1 < len(planned):
-                    time.sleep(args.delay)
+                    if not page_flow.sleep_or_interrupt(args.delay):
+                        logger.warning("Interrupted — writing the %d page(s) already "
+                                       "fetched.", len(outcomes) + 1)
+                        stop_reason = "interrupted"
+                        break
     finally:
         if session is not None:
             session.close()
@@ -1249,7 +1275,7 @@ def parse_args():
                    help="Which route --mode listings reads. api (default): "
                         "justjoin.it's offers endpoint — every page, every "
                         "filter, up to 1,000 rows a request. ssr: the "
-                        "rendered listing page, ONE page of 100 rows with a "
+                        "rendered listing page, ONE page of about 50 rows with a "
                         "poorer schema (no category, no languages, no skill "
                         "levels), and the only route justjoin.it's "
                         "robots.txt permits — it carries Disallow: /api/. "
@@ -1385,8 +1411,8 @@ def parse_args():
     p.add_argument("--fp-tags", default="Windows",
                    help="ONE OS-family tag for the fingerprint filter: "
                         "Windows, Microsoft Windows or Android. NOT a list — "
-                        "Chrome, Desktop and Mobile are each rejected by the "
-                        "API with 400, and no combination is accepted. Use "
+                        "Chrome, Desktop and Mobile were each accepted by the "
+                        "API on 2026-11-12; combinations are not tried. Use "
                         "--fp-country to narrow further. (default: Windows)")
     p.add_argument("--fp-country", default=None,
                    help="Fingerprint country, ISO 3166-1 alpha-2. Match it to "
@@ -1459,7 +1485,7 @@ def parse_args():
                        "listing serves ONE page and answers ?page=N with "
                        "page 1 again, so planning more would re-collect page "
                        "1 and report a complete multi-page run. Use --route "
-                       "api (the default) for more than 100 rows. The run "
+                       "api (the default) for more than 50 rows. The run "
                        "status will say single_page_route.", args.pages)
         args.pages = 1
 
@@ -1494,6 +1520,11 @@ if __name__ == "__main__":
                        "remote browser supplies its own.")
     try:
         sys.exit(scrape(args))
+    except KeyboardInterrupt:
+        # Reached only when nothing was written yet: once a page has been
+        # fetched the loops end the run as `interrupted` and write it.
+        logger.error("Interrupted before any page was fetched; nothing written.")
+        sys.exit(130)
     except ProxyError as e:
         logger.error("%s", e)
         sys.exit(2)

@@ -70,7 +70,7 @@ Usage
     python3 playwright_scraper.py --mode facets
     python3 playwright_scraper.py --mode offer --pages 50 --concurrency 4
     python3 playwright_scraper.py --mode offer --url "https://justjoin.it/job-offer/goodylabs-senior-devops-engineer-k-m-x--lodz-devops"
-    python3 playwright_scraper.py --route ssr      # robots.txt-clean, 100 rows
+    python3 playwright_scraper.py --route ssr      # robots.txt-clean, ~50 rows
 
 This site answered every one of those from a bare datacentre IP with no
 credentials on 2026-09-18. `--proxy` and `--cdp-endpoint` work and are not
@@ -79,7 +79,7 @@ required.
 Note on robots.txt: justjoin.it allows `/job-offers/` and `/job-offer/`,
 advertises eight sitemaps of its own, and carries `Disallow: /api/` — which
 is where the offers endpoint lives. `--route ssr` reads the rendered
-listing page instead (100 rows, one page). The README states this plainly
+listing page instead (about 50 rows, one page). The README states this plainly
 rather than leaving it to be found.
 """
 
@@ -99,6 +99,7 @@ from playwright.sync_api import (sync_playwright, Error as PWError,
 
 from captcha_solver import (detect_recaptcha_v3, detect_recaptcha_in_page,
                             reconcile_detections, solve_recaptcha,
+                            solve_attempts,
                             CaptchaUnsolvable, INJECT_TOKEN_JS,
                             RECAPTCHA_DISCOVERY_JS, detect_turnstile,
                             wait_for_turnstile, TURNSTILE_INTERCEPT_JS,
@@ -993,8 +994,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         # Counted, because it can BUY. See _solve_budget.
         if _solve_budget(args, solves_bought):
-            solves_bought += 1
-            if handle_captcha_if_present(session.page, args):
+            attempts_before = solve_attempts()
+            solved = handle_captcha_if_present(session.page, args)
+            solves_bought += solve_attempts() - attempts_before
+            if solved:
                 # A solve navigated the page. Give the destination a moment
                 # before judging what came back.
                 session.page.wait_for_timeout(1000)
@@ -1055,8 +1058,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # paying for one the API will reject.
         if (page_flow.should_solve(state)
                 and _solve_budget(args, solves_bought)):
-            solves_bought += 1
-            if handle_captcha_if_present(session.page, args):
+            attempts_before = solve_attempts()
+            solved = handle_captcha_if_present(session.page, args)
+            solves_bought += solve_attempts() - attempts_before
+            if solved:
                 session.page.wait_for_timeout(1000)
                 body = _fetch_body(session, args, url) or body
                 state = _classify(session.page, body, http_status, args.mode,
@@ -1633,9 +1638,15 @@ def scrape(args) -> int:
                 if len(planned) + 1 < args.pages:
                     # Capped by the site's own arithmetic — a complete
                     # answer rather than an early stop.
-                    stop_reason = "page_cap_reached"
+                    stop_reason = ("queue_exhausted" if args.mode == "offer"
+                                   else "page_cap_reached")
 
+                # A queue of offers is addressable by construction: every
+                # entry has its own URL and the list was fixed before the
+                # first fetch. The check below asks whether a LISTING's page N
+                # has an address, which is the wrong question for it.
                 if (args.pages > 1 and concurrency > 1
+                        and not independent
                         and not page_flow.pagination_is_addressable(
                             first.final_url or target, args.route)):
                     logger.warning("--concurrency %d requested, but this "
@@ -1681,7 +1692,13 @@ def scrape(args) -> int:
                             pool.advance(f"per-page rotation, page {page_num}")
                             session.relaunch()
 
-                        outcome = _fetch_one_page(session, args, pool, page_num, url)
+                        try:
+                            outcome = _fetch_one_page(session, args, pool, page_num, url)
+                        except KeyboardInterrupt:
+                            logger.warning("Interrupted during page %d — writing the %d "
+                                           "page(s) already fetched.", page_num, len(outcomes))
+                            stop_reason = "interrupted"
+                            break
                         outcomes.append(outcome)
                         if not outcome.ok:
                             stop_reason = ("page_load_timeout" if outcome.load_failed
@@ -1720,7 +1737,11 @@ def scrape(args) -> int:
 
                         if page_num - 1 < len(planned):
                             url = planned[page_num - 1]
-                            time.sleep(args.delay)
+                            if not page_flow.sleep_or_interrupt(args.delay):
+                                logger.warning("Interrupted — writing the %d page(s) already "
+                                               "fetched.", len(outcomes) + 1)
+                                stop_reason = "interrupted"
+                                break
         finally:
             if session is not None:
                 session.close()
@@ -1920,7 +1941,7 @@ def parse_args():
                    help="Which route --mode listings reads. api (default): "
                         "justjoin.it's offers endpoint — every page, every "
                         "filter, up to 1,000 rows a request. ssr: the "
-                        "rendered listing page, ONE page of 100 rows with a "
+                        "rendered listing page, ONE page of about 50 rows with a "
                         "poorer schema (no category, no languages, no skill "
                         "levels), and the only route justjoin.it's "
                         "robots.txt permits — it carries Disallow: /api/. "
@@ -2080,8 +2101,8 @@ def parse_args():
     p.add_argument("--fp-tags", default="Windows",
                    help="ONE OS-family tag for the fingerprint filter: "
                         "Windows, Microsoft Windows or Android. NOT a list — "
-                        "Chrome, Desktop and Mobile are each rejected by the "
-                        "API with 400, and no combination is accepted. Use "
+                        "Chrome, Desktop and Mobile were each accepted by the "
+                        "API on 2026-11-12; combinations are not tried. Use "
                         "--fp-country to narrow further. (default: Windows)")
     p.add_argument("--fp-country", default=None,
                    help="Fingerprint country, ISO 3166-1 alpha-2. Match it to "
@@ -2176,7 +2197,7 @@ def parse_args():
                        "listing serves ONE page and answers ?page=N with "
                        "page 1 again, so planning more would re-collect page "
                        "1 and report a complete multi-page run. Use --route "
-                       "api (the default) for more than 100 rows. The run "
+                       "api (the default) for more than 50 rows. The run "
                        "status will say single_page_route.", args.pages)
         args.pages = 1
 
@@ -2215,6 +2236,11 @@ if __name__ == "__main__":
                        "than better cover.")
     try:
         sys.exit(scrape(args))
+    except KeyboardInterrupt:
+        # Reached only when nothing was written yet: once a page has been
+        # fetched the loops end the run as `interrupted` and write it.
+        logger.error("Interrupted before any page was fetched; nothing written.")
+        sys.exit(130)
     except ProxyError as e:
         # Bad usage, not a crash: a typo in a proxy list would otherwise
         # surface as a connection failure on page 1 with nothing naming it.

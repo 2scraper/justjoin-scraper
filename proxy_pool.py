@@ -65,7 +65,18 @@ def parse_proxy_line(line: str, source: str = "<arg>") -> Optional[str]:
     # strings hold a password, and an error message is a log: a CI run
     # printed a live proxy login and password into its own public log this
     # way, from a traceback nobody expected to carry a credential.
-    shown = mask(line)
+    # `mask()` takes a bare URL and answers "?://?" for anything without a
+    # scheme, which is exactly what a mistyped entry is. So a line with no
+    # scheme is shown with its userinfo cut, or not at all when it looks like
+    # the host:port:login:password form.
+    if "://" in line:
+        shown = mask(line)
+    elif "@" in line:
+        shown = "***@" + line.rsplit("@", 1)[1]
+    elif line.count(":") >= 3:
+        shown = "<redacted>"
+    else:
+        shown = line
     parsed = urlparse(line)
     if parsed.scheme not in _SUPPORTED_SCHEMES:
         raise ProxyError(

@@ -491,7 +491,7 @@ def plan_page_urls(args, page_one_url: str,
                 "answers HTTP 200 with page 1 again — so %d page(s) were "
                 "asked for and 1 will be fetched. Planning a page 2 would "
                 "re-collect page 1 and report a complete multi-page run. "
-                "Use --route api (the default) for more than 100 rows.",
+                "Use --route api (the default) for more than 50 rows.",
                 args.pages)
         return []
 
@@ -582,3 +582,19 @@ def enumerate_offers(fetch_source, args) -> List[str]:
     return slugs
 
 
+
+
+
+def sleep_or_interrupt(seconds: float) -> bool:
+    """Sleep; False when Ctrl+C arrived instead.
+
+    The page loops call this between pages, so that an interrupt there ends
+    the run as `interrupted` with the pages already fetched written out,
+    instead of unwinding past `finish_run` and losing them.
+    """
+    import time
+    try:
+        time.sleep(seconds)
+    except KeyboardInterrupt:
+        return False
+    return True

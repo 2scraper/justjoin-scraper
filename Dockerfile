@@ -12,6 +12,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Playwright's bundled node driver links libatomic.so.1, which python:*-slim
+# does not ship (observed on arm64 with every release, and on amd64 with
+# Playwright 1.65), and it runs before `--with-deps` gets a chance to apt-get.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt requirements-playwright.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.txt \
     # Playwright's own apt-get for Chromium's shared-library dependencies —

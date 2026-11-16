@@ -3601,7 +3601,7 @@ def check_every_solve_is_counted_against_the_budget():
         if not os.path.exists(path):
             continue
         source = open(path, encoding="utf-8").read()
-        calls = source.count("if handle_captcha_if_present(")
+        calls = source.count("= handle_captcha_if_present(")
         check("%s calls the solver from two places, as designed" % module,
               calls == 2, "found %d call site(s)" % calls)
         # Both must sit under a budget test. Counting the guard is the cheap
@@ -3610,13 +3610,41 @@ def check_every_solve_is_counted_against_the_budget():
         check("%s gates BOTH solve call sites on the budget" % module,
               guards == calls,
               "%d budget guard(s) for %d call site(s)" % (guards, calls))
-        check("%s increments the counter beside each guard" % module,
-              source.count("solves_bought += 1") == calls,
-              "%d increment(s) for %d call site(s)"
-              % (source.count("solves_bought += 1"), calls))
+        # The counter moves by purchases actually STARTED, read off the
+        # solver, not by "a check was made": a call that finds nothing to
+        # solve buys nothing and must not spend the page's one allowance.
+        bumps = source.count("solves_bought += solve_attempts() - attempts_before")
+        check("%s counts purchases beside each guard" % module,
+              bumps == calls,
+              "%d purchase count(s) for %d call site(s)" % (bumps, calls))
+        check("%s no longer counts a call that bought nothing" % module,
+              "solves_bought += 1" not in source)
     # And the constant must still be the one thing that decides it.
     import page_flow
     equal("at most one purchase per page", page_flow.SOLVES_PER_PAGE, 1)
+
+
+def check_solve_attempts_counts_only_started_purchases():
+    """`solve_attempts()` moves when a paid task is created and not when a
+    solve is refused before one (no key, Turnstile on the v1 API)."""
+    import captcha_solver as cs
+    before = cs.solve_attempts()
+    ch = cs.CaptchaChallenge(kind="recaptcha_v2", sitekey="k",
+                             page_url="https://justjoin.it/")
+    try:
+        cs.solve_recaptcha(ch, None)
+    except RuntimeError:
+        pass
+    equal("a refusal for want of a key buys nothing",
+          cs.solve_attempts(), before)
+    real = cs._solve_with_2captcha_v2
+    cs._solve_with_2captcha_v2 = lambda *a, **k: "token"
+    try:
+        cs.solve_recaptcha(ch, "key")
+    finally:
+        cs._solve_with_2captcha_v2 = real
+    equal("a task handed to the solver is counted once",
+          cs.solve_attempts(), before + 1)
 
 
 def check_a_dead_proxy_is_reported_as_a_proxy_failure():
@@ -4113,6 +4141,324 @@ def check_scraper_api_waitfor_object_and_http_code():
                 "not the API's own 'success' verdict",
                 type(handed) is int and handed == 403 and logged == [403])
 
+
+
+# ---------------------------------------------------------------------------
+# Audit of 2026-11-16 (manual-test report on v0.1.4, 67be0b3)
+# ---------------------------------------------------------------------------
+#
+# Each check below fails on the code as it stood at that commit.
+
+def _argv_exit(engine, argv):
+    """The exit code `engine.parse_args` ends with for `argv`, or None."""
+    saved = sys.argv[:]
+    sys.argv = [engine.__name__ + ".py"] + argv
+    try:
+        with __import__("contextlib").redirect_stderr(io.StringIO()):
+            engine.parse_args()
+        return None
+    except SystemExit as e:
+        return e.code
+    finally:
+        sys.argv = saved
+
+
+def check_audit_arguments_are_refused_before_any_request():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        ran += 1
+        cases = {
+            "--pages 0": ["--pages", "0"],
+            "--pages -1": ["--pages", "-1"],
+            "--out into a directory that does not exist":
+                ["--out", "/nonexistent-dir-xyz/out"],
+            "a listing URL with a filter this scraper cannot apply":
+                ["--url", "https://justjoin.it/job-offers/all-locations/"
+                          "python?remote=yes"],
+            "an experience-level the endpoint does not know":
+                ["--url", "https://justjoin.it/job-offers/all-locations/"
+                          "python?experience-level=wizard"],
+            "--slugs-file that is not there":
+                ["--mode", "offer", "--slugs-file", "/nonexistent-xyz.txt"],
+        }
+        for label, argv in cases.items():
+            equal("%s: %s is exit 2" % (module, label),
+                  _argv_exit(engine, argv), 2)
+        equal("%s: a supported listing URL still parses" % module,
+              _argv_exit(engine, [
+                  "--url", "https://justjoin.it/job-offers/all-locations/"
+                           "python?experience-level=senior"]), None)
+    if ran == 0:
+        skip("audit arguments", "no engine library installed here")
+
+
+def check_audit_listing_url_filters_reach_the_endpoint():
+    f = pp.filters_from_listing_url(
+        "https://justjoin.it/job-offers/all-locations/python"
+        "?experience-level=senior,mid&employment-type=b2b&keyword=rust")
+    equal("experience-level", list(f.experience), ["senior", "mid"])
+    equal("employment-type", list(f.employment), ["b2b"])
+    equal("the endpoint parameter", f.as_params()["experienceLevels"],
+          ["senior", "mid"])
+    equal("an explicit flag beats the URL", list(pp.filters_from_args(
+        types_ns(url="https://justjoin.it/job-offers/all-locations/python"
+                     "?experience-level=senior", experience=["junior"])
+    ).experience), ["junior"])
+    check("a parameter nothing translates is named",
+          "remote" in (pp.listing_url_problem(
+              "https://justjoin.it/job-offers/all-locations?remote=yes")
+              or ""))
+
+
+def types_ns(**kw):
+    base = dict(url=None, category=None, city=None, city_radius=None,
+                remote=False, keyword=None, experience=None, language=None,
+                employment=None, working_time=None, with_salary=False)
+    base.update(kw)
+    return _types.SimpleNamespace(**base)
+
+
+def check_audit_csv_dash_and_allow_empty_status():
+    import output_writer as ow
+    equal("a lone dash is not a formula", ow._csv_cell("-"), ("-", False))
+    equal("-abc still is", ow._csv_cell("-abc"), ("'-abc", True))
+    equal("=1+1 still is", ow._csv_cell("=1+1"), ("'=1+1", True))
+    tmp = tempfile.mkdtemp(prefix="jj_ae_")
+    out = os.path.join(tmp, "ae")
+    with __import__("contextlib").redirect_stdout(io.StringIO()):
+        code = ow.finish_run([], out, "json", True, blocked=False,
+                             stop_reason="completed", pages_requested=1,
+                             pages_completed=1, start_url="u", final_url="u")
+    meta = json.load(open(out + ".meta.json", encoding="utf-8"))
+    equal("--allow-empty: the exit stays 4", code, 4)
+    equal("--allow-empty: a finished empty run is not `failed`",
+          meta["status"], "complete")
+    with __import__("contextlib").redirect_stdout(io.StringIO()):
+        ow.finish_run([], out + "2", "json", True, blocked=False,
+                      stop_reason="page_load_timeout", pages_requested=1,
+                      pages_completed=0, start_url="u", final_url="u")
+    meta = json.load(open(out + "2.meta.json", encoding="utf-8"))
+    equal("...but an unfinished one still is", meta["status"], "failed")
+
+
+def check_audit_an_empty_flag_beats_the_environment():
+    import env_config
+    saved = os.environ.get("JUSTJOIN_PROXY")
+    os.environ["JUSTJOIN_PROXY"] = "http://u:p@host.example:1"
+    try:
+        a = _types.SimpleNamespace(proxy="")
+        env_config.apply(a, keys={"JUSTJOIN_PROXY": "proxy"}, quiet=True)
+        equal("--proxy \"\" stays empty", a.proxy, "")
+        b = _types.SimpleNamespace(proxy=None)
+        env_config.apply(b, keys={"JUSTJOIN_PROXY": "proxy"}, quiet=True)
+        equal("an unset flag still takes the variable", b.proxy,
+              "http://u:p@host.example:1")
+    finally:
+        if saved is None:
+            os.environ.pop("JUSTJOIN_PROXY", None)
+        else:
+            os.environ["JUSTJOIN_PROXY"] = saved
+
+
+def check_audit_ctrl_c_keeps_the_pages_already_fetched():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        ran += 1
+        calls = []
+
+        def outcome_for(url, calls=calls):
+            calls.append(url)
+            if len(calls) == 3:
+                raise KeyboardInterrupt
+            return "content", ["p%d" % len(calls)]
+        code, fetched, meta = _drive_scrape(
+            engine, ["--category", "python", "--pages", "5",
+                     "--per-page", "1"], outcome_for)
+        equal("%s: Ctrl+C on page 3 is exit 6" % module, code, 6)
+        check("%s: a sidecar was written" % module, meta is not None)
+        if meta is not None:
+            equal("%s: stop_reason" % module, meta["stop_reason"],
+                  "interrupted")
+            equal("%s: status" % module, meta["status"], "partial")
+            equal("%s: the two fetched pages are kept" % module,
+                  meta["products"], 2)
+    if ran == 0:
+        skip("ctrl-c", "no engine library installed here")
+
+
+def check_audit_a_finished_offer_queue_is_not_a_page_cap():
+    ran = 0
+    for module in ENGINES:
+        engine = _import_engine(module)
+        if engine is None:
+            continue
+        ran += 1
+        path = _offer_queue_file(["a", "b", "c"])
+        try:
+            code, fetched, meta = _drive_scrape(
+                engine, ["--mode", "offer", "--slugs-file", path,
+                         "--pages", "10"],
+                lambda url: ("content", [url.rsplit("/", 1)[-1]]))
+        finally:
+            os.unlink(path)
+        equal("%s: exit 0" % module, code, 0)
+        equal("%s: the queue ended, the cap did not" % module,
+              (meta or {}).get("stop_reason"), "queue_exhausted")
+        equal("%s: and the run is complete" % module,
+              (meta or {}).get("status"), "complete")
+    if ran == 0:
+        skip("queue exhausted", "no engine library installed here")
+
+
+def check_audit_diff_runs_refuses_what_it_cannot_compare():
+    import diff_runs
+    tmp = tempfile.mkdtemp(prefix="jj_diff_")
+
+    def write(name, route, share=100, mode="listings"):
+        base = os.path.join(tmp, name)
+        json.dump([], open(base + ".json", "w"))
+        json.dump({"status": "complete", "mode": mode, "route": route,
+                   "sort": "published", "order": "descending",
+                   "filters": {}, "share_of_query_pct": share},
+                  open(base + ".meta.json", "w"))
+        return base + ".json"
+    api = write("api", "api")
+    ssr = write("ssr", "ssr")
+    sapi = write("sapi", "scraper_api")
+    part = write("part", "api", share=57.4)
+    ns = lambda o, n: _types.SimpleNamespace(old=o, new=n, force=False)
+    buf = io.StringIO()
+    with __import__("contextlib").redirect_stdout(buf):
+        refused = diff_runs._check_comparable(ns(api, ssr))
+    check("api against ssr is refused", refused is False)
+    check("...and the refusal names the routes", "routes" in buf.getvalue())
+    with __import__("contextlib").redirect_stdout(io.StringIO()):
+        check("api against scraper_api stays comparable",
+              diff_runs._check_comparable(ns(api, sapi)) is True)
+    buf = io.StringIO()
+    with __import__("contextlib").redirect_stdout(buf):
+        diff_runs._check_comparable(ns(part, part))
+    check("a partial-share listing run is flagged as a slice",
+          "slice" in buf.getvalue(), buf.getvalue()[:200])
+    saved = sys.argv[:]
+    sys.argv = ["diff_runs.py", "--old", os.path.join(tmp, "nofile.json"),
+                "--new", api]
+    buf = io.StringIO()
+    try:
+        with __import__("contextlib").redirect_stdout(buf):
+            code = diff_runs.main()
+    finally:
+        sys.argv = saved
+    equal("a missing file is exit 2", code, 2)
+    check("...and says so rather than blaming the sidecar",
+          "no such file" in buf.getvalue().lower(), buf.getvalue())
+
+
+def check_audit_fingerprint_reaches_every_engine():
+    import fingerprint_client as fc
+    fp = {"userAgent": {"userAgent": "UA/154"},
+          "navigator": {"platform": "Win32", "hardwareConcurrency": 16,
+                        "deviceMemory": 32},
+          "webgl": {"glParameters": {"37445": "Google Inc. (NVIDIA)",
+                                     "37446": "ANGLE (NVIDIA RTX)"}},
+          "screen": {"width": 1920, "height": 1080, "outerWidth": 1920,
+                     "outerHeight": 960, "deviceScaleFactor": 1.25},
+          "intl": {"timeZone": "Europe/Warsaw"}}
+    script = fc.playwright_init_script(fp)
+    check("WebGL vendor is read from glParameters",
+          "Google Inc. (NVIDIA)" in script and "ANGLE (NVIDIA RTX)" in script)
+    emu = fc.cdp_emulation(fp)
+    equal("the timezone goes over CDP", emu.get("timezone"), "Europe/Warsaw")
+    equal("the screen goes over CDP", emu["metrics"]["screenWidth"], 1920)
+    for module in ("selenium_scraper", "puppeteer_scraper"):
+        path = os.path.join(HERE, module + ".py")
+        source = open(path, encoding="utf-8").read()
+        check("%s takes the user agent from fingerprint_user_agent" % module,
+              "fingerprint_user_agent(fp)" in source
+              and '(fp.get("userAgent") or {}).get("value")' not in source)
+    source = open(os.path.join(HERE, "puppeteer_scraper.py"),
+                  encoding="utf-8").read()
+    check("puppeteer installs the init script over CDP, not through "
+          "evaluateOnNewDocument (which wraps it into a syntax error)",
+          "self.page.evaluateOnNewDocument(" not in source
+          and "Page.addScriptToEvaluateOnNewDocument" in source)
+
+
+def check_audit_scraper_api_client_refuses_before_paying():
+    import scraper_api_client as sac
+    ns = lambda **kw: _types.SimpleNamespace(**{**dict(
+        url="https://justjoin.it/api/candidate-api/offers", timeout=60,
+        retries=1, mode="listings"), **kw})
+    check("a foreign host", sac._args_problem(
+        ns(url="https://example.com/")) is not None)
+    check("--timeout 0", sac._args_problem(ns(timeout=0)) is not None)
+    check("--timeout 121", sac._args_problem(ns(timeout=121)) is not None)
+    problem = sac._args_problem(ns(
+        url="https://justjoin.it/job-offer/some-offer-gdynia-python",
+        mode="offer"))
+    check("an offer page names its endpoint",
+          problem and "/api/candidate-api/offers/some-offer-gdynia-python"
+          in problem, problem)
+    a = ns(url="https://justjoin.it/job-offers/all-locations/python")
+    equal("a listing page is read as the rendered page",
+          (sac._args_problem(a), a.route), (None, "ssr"))
+    check("a listing page with --mode offer is refused",
+          sac._args_problem(ns(url=a.url, mode="offer")) is not None)
+
+
+def check_audit_a_mistyped_proxy_is_shown_not_masked_away():
+    import proxy_pool
+    try:
+        proxy_pool.parse_proxy_line("notaproxy", "--proxy")
+    except proxy_pool.ProxyError as e:
+        check("the entry is quoted", "notaproxy" in str(e), str(e))
+        check("not as ?://?", "?://?" not in str(e), str(e))
+    try:
+        proxy_pool.parse_proxy_line("login:secret@host.example:8080", "x")
+    except proxy_pool.ProxyError as e:
+        check("a credential without a scheme is not echoed",
+              "secret" not in str(e), str(e))
+
+
+def check_audit_dockerfile_installs_libatomic_first():
+    text = open(os.path.join(HERE, "Dockerfile"), encoding="utf-8").read()
+    check("libatomic1 is installed", "libatomic1" in text)
+    check("...before pip install",
+          text.index("RUN apt-get") < text.index("RUN pip install"))
+
+
+def check_audit_offer_queue_runs_concurrently():
+    engine = _import_engine("playwright_scraper")
+    if engine is None:
+        return
+    import logging
+    records = []
+
+    class Catch(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+    handler = Catch()
+    engine.logger.addHandler(handler)
+    path = _offer_queue_file(["a", "b", "c", "d", "e"])
+    try:
+        code, fetched, meta = _drive_scrape(
+            engine, ["--mode", "offer", "--slugs-file", path, "--pages", "5",
+                     "--concurrency", "3"],
+            lambda url: ("content", [url.rsplit("/", 1)[-1]]))
+    finally:
+        os.unlink(path)
+        engine.logger.removeHandler(handler)
+    check("it is not told its pages cannot be addressed",
+          not any("cannot be addressed" in m for m in records), records)
+    equal("every offer fetched", len(fetched), 5)
+    equal("exit 0", code, 0)
+    equal("all five written", (meta or {}).get("products"), 5)
 
 
 CHECKS = [v for k, v in sorted(globals().items()) if k.startswith("check_")]

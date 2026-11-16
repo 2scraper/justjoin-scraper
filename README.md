@@ -161,7 +161,7 @@ for r in json.load(open('board.json')):
 # then one run per category
 for c in data java analytics pm devops erp architecture testing ai security \
          other python net admin javascript support mobile c ux php go game \
-         scala ruby html; do
+         scala ruby; do
   python3 playwright_scraper.py --category "$c" --pages 20 --per-page 100 \
       --out "board_$c"
 done
@@ -464,9 +464,11 @@ endpoint paginates by numeric offset, so page 5's address is knowable
 without fetching page 4.
 
 It is clamped to 1 where it would be pointless — `--mode facets` (one
-request) and `--route ssr` (one page) — and refused with `--cdp-endpoint`,
-because a Scraping Browser profile allows one live connection and workers
-would collide. Use several `pid`s, one run each.
+request) and `--route ssr` (one page) — and ignored, with a warning, with
+`--cdp-endpoint`, because a Scraping Browser
+profile allows one live connection and workers would collide. Use several `pid`s, one run each.
+Only `playwright_scraper.py` fetches pages in parallel; the Selenium and
+Puppeteer engines accept the flag and run one page at a time.
 
 Without a proxy pool, N workers send N times the traffic from one address.
 The scraper warns and continues.

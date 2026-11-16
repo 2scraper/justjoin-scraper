@@ -11,6 +11,23 @@ burying it.
 
 ## [Unreleased]
 
+### Fixed
+
+- `--url` with a listing address from the site: `experience-level=` and `employment-type=` now become endpoint filters, and any other query parameter (for example `remote=yes`) is refused with exit 2 naming it, instead of being dropped while the run looked filtered.
+- The Docker image installs `libatomic1`, which Playwright's bundled node driver needs; the build failed without it (arm64, and amd64 with Playwright 1.65).
+- Ctrl+C between pages ends the run as `interrupted` (`status: partial`, exit 6) and writes the pages already fetched, in all three engines; before, they were lost to a traceback.
+- Arguments refused before the first request, with exit 2: `--pages` below 1, `--out` in a directory that does not exist, `--slugs-file` that does not exist.
+- Configuration precedence: an explicit empty flag (`--proxy ""`, `--url ""`, `--cdp-endpoint ""`) now overrides the `.env` / environment value instead of falling through to it.
+- A lone `-` (the site's "no street") is no longer written as `'-` in CSV.
+- `--allow-empty` with a finished, genuinely empty run writes `status: complete` instead of `failed`.
+- `--mode offer`: a queue shorter than `--pages` ends as `queue_exhausted`, not `page_cap_reached`; `--concurrency` now applies to an offer queue.
+- Solve allowance: a page's one paid solve is spent when a task is actually created, not when the captcha check merely ran, so a challenge that appears one step later is no longer refused.
+- `--fingerprint` in Selenium and Puppeteer: the user agent, screen size and timezone from the fingerprint are applied; Puppeteer's init script was a syntax error and ran nothing. The WebGL vendor and renderer are read from `glParameters` in every engine.
+- `diff_runs.py`: refuses `--route api` against `--route ssr`; warns when a listings run took less than 100% of its query; says "no such file" for a missing input.
+- `scraper_api_client.py`: a listing page (`/job-offers/...`) is parsed as the rendered page; an offer page, a non-justjoin.it host, `--timeout` outside 1-120 and `--mode` mismatches are refused before the paid request; `--mode facets` defaults to the facets endpoint; the help no longer carries text from another scraper.
+- A mistyped `--proxy` entry is shown in the error instead of `?://?`.
+- The `--route ssr` help and warnings say about 50 rows, not 100; the README loop no longer lists the `html` category, and states that only the Playwright engine fetches pages in parallel.
+
 ### Changed
 
 - CI only: the canary now runs weekly (Mondays 05:40 UTC) instead of daily, and on a manual dispatch.
